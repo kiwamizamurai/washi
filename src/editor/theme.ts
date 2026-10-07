@@ -8,7 +8,7 @@ const view = EditorView.theme({
     height: "100%",
     color: "var(--ink)",
     backgroundColor: "var(--paper)",
-    fontSize: "0.9rem",
+    fontSize: "var(--editor-font-size, 0.9rem)",
   },
   "&.cm-focused": { outline: "none" },
   ".cm-scroller": {

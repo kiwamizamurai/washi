@@ -30,6 +30,7 @@ import type { Item } from "./palette/items";
 import { CommandPalette } from "./palette/palette";
 import { ReadingProgress } from "./progress";
 import { domSearchSource } from "./search-source";
+import { stepEditorFontSize } from "./zoom";
 import { basename, extensionOf, resolveLink } from "./paths";
 import { loadPrefs, savePrefs, type Prefs } from "./prefs";
 import { addRecent, clearRecent, describe, loadRecent, removeRecent } from "./recent";
@@ -267,7 +268,13 @@ async function main() {
       return viewer.reload();
     },
     setWidth: (width) => update({ width }),
-    zoom: (direction) => viewer.zoom(direction),
+    zoom: (direction) => {
+      if (editing.editorFocused()) {
+        update({ editorFontSize: stepEditorFontSize(prefs.editorFontSize, direction) });
+        return;
+      }
+      viewer.zoom(direction);
+    },
     save: () => editing.save(),
     toggleEdit: () => editing.toggle(),
     undo: () => editing.undo(),
