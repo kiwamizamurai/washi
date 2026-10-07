@@ -10,6 +10,13 @@ The `washi` command-line interface (the `--json` output, exit codes, and the std
 - With `latexmk`, the engine chosen in `.latexmkrc` (platex, xelatex, lualatex) is no longer overridden. Washi used to pass `-pdf`, which forced pdfLaTeX; it now asks for a PDF only when no rc file has chosen how to make one.
 - LaTeX failures now start with a plain explanation when the cause is known: biblatex without `biber`, a document that needs `-shell-escape` (such as `minted`), a document that needs pLaTeX, or a chapter file without `\documentclass`. Before, a missing `biber` showed only "No such file or directory".
 
+### Security
+- A `.latexmkrc` in a document's folder can run any command, so Washi no longer lets `latexmk` read it until you allow it. Opening a `.tex` file shows the file's first lines and asks; the choice is remembered until the file changes. Until then `latexmk` runs with `-norc` and only your own `~/.latexmkrc`.
+
+### Changed
+- The GitHub Actions workflows use current action versions (the Node 20 warnings are gone) pinned to commit SHAs.
+- The comparison table on the landing pages says what a dash means.
+
 ### Added
 - `% !TEX root = main.tex` is understood. Opening or editing a chapter builds the main file, watches the main file's includes, and follows SyncTeX through it. While the chapter has unsaved changes, the preview keeps the last build and rebuilds on save.
 - A "LaTeX notes" section in the README on engines, multi-file projects, biblatex, pLaTeX and shell escape.

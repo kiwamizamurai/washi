@@ -41,6 +41,8 @@ pub fn run() {
             commands::read_text,
             commands::write_file,
             commands::set_dirty,
+            commands::latexmkrc_status,
+            commands::trust_latexmkrc,
             commands::watch,
         ])
         .menu(|app| menu::build(app))

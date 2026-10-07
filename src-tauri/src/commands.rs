@@ -129,6 +129,27 @@ pub fn set_dirty(window: WebviewWindow, dirty_windows: State<DirtyWindows>, dirt
 }
 
 #[tauri::command]
+pub async fn latexmkrc_status(path: String) -> Result<Option<render::RcStatus>, String> {
+    tauri::async_runtime::spawn_blocking(move || render::latexmkrc_status(&PathBuf::from(path)))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn trust_latexmkrc(
+    window: WebviewWindow,
+    documents: State<'_, Documents>,
+    path: String,
+) -> Result<(), String> {
+    if !documents.owns(window.label(), &path) {
+        return Err("Can only trust the .latexmkrc of the file this window has open".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || render::trust_latexmkrc(&PathBuf::from(path)))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 pub async fn render_text(text: String) -> Result<Response, String> {
     let output = tauri::async_runtime::spawn_blocking(move || render::render_text(&text))
         .await

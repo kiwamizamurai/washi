@@ -65,6 +65,7 @@ Washi always opens a file for reading. Press `⌘E` to edit Markdown, Typst, LaT
 ### LaTeX notes
 
 - **Engine**: with `latexmk`, the engine comes from your `.latexmkrc` (platex, xelatex, lualatex); without one it uses pdfLaTeX. Without `latexmk`, `tectonic` (XeTeX) is used.
+- **`.latexmkrc` in a project folder** can run any command, so Washi shows you its contents and asks before using it. It remembers your answer until the file changes. Your own `~/.latexmkrc` is always used.
 - **Several files**: put `% !TEX root = main.tex` on the first lines of a chapter, and Washi builds the main file when you open or edit the chapter. While the chapter has unsaved changes the preview keeps the last build, and it rebuilds when you save.
 - **biblatex** needs `biber`, which `tectonic` does not provide: install TeX Live or MacTeX (with `latexmk`).
 - **pLaTeX / jsarticle** cannot be built by `tectonic`; use `latexmk` with a `.latexmkrc` (for example `$latex = 'platex'; $dvipdf = 'dvipdfmx %O -o %D %S'; $pdf_mode = 3;`). XeLaTeX with `xeCJK` works with either.

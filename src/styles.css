@@ -701,7 +701,8 @@ kbd {
 }
 
 #banner button,
-#confirm button {
+#confirm button,
+#trust button {
   padding: 0.25rem 0.75rem;
   border: 1px solid var(--rule);
   border-radius: 6px;
@@ -711,7 +712,8 @@ kbd {
   cursor: pointer;
 }
 #banner button:hover,
-#confirm button:hover {
+#confirm button:hover,
+#trust button:hover {
   border-color: var(--accent);
 }
 
@@ -797,7 +799,8 @@ kbd {
   margin: 0;
 }
 
-#confirm {
+#confirm,
+#trust {
   max-width: 24rem;
   padding: 1.25rem 1.5rem;
   border: 1px solid var(--rule);
@@ -806,18 +809,22 @@ kbd {
   box-shadow: 0 8px 32px rgb(0 0 0 / 0.3);
   color: var(--ink);
 }
-#confirm::backdrop {
+#confirm::backdrop,
+#trust::backdrop {
   background: rgb(0 0 0 / 0.3);
 }
-#confirm p {
+#confirm p,
+#trust p {
   margin: 0 0 1rem;
 }
-#confirm .actions {
+#confirm .actions,
+#trust .actions {
   display: flex;
   justify-content: flex-end;
   gap: 0.5rem;
 }
-#confirm button[value="save"] {
+#confirm button[value="save"],
+#trust button[value="allow"] {
   border-color: var(--accent);
   background: var(--accent);
   color: var(--paper);
@@ -856,7 +863,29 @@ kbd {
   #editor-pane,
   #resizer,
   #palette,
-  #confirm {
+  #confirm,
+  #trust {
     display: none !important;
   }
+}
+
+#trust {
+  max-width: 34rem;
+}
+#trust code {
+  display: block;
+  margin: 0 0 0.6rem;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+#trust pre {
+  max-height: 12rem;
+  margin: 0 0 1rem;
+  padding: 0.6rem 0.8rem;
+  overflow: auto;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--code-bg);
+  font: 0.78rem/1.5 var(--font-mono);
 }

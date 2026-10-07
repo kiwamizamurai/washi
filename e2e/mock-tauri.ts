@@ -120,6 +120,14 @@ w.__TAURI_INTERNALS__ = {
         const items = [{ label: "lorem", kind: "func", detail: "words: int", apply: "lorem(${words})" }, { label: "let", kind: "syntax", detail: null, apply: null }];
         return { offset: Number(args.offset) - m[1].length, items: items.filter((i) => i.label.startsWith(m[1])) };
       }
+      case "latexmkrc_status": {
+        if (!String(args.path).endsWith(".tex") || !files.has("/x/.latexmkrc")) return null;
+        return { file: "/x/.latexmkrc", trusted: w.__rcTrusted === true };
+      }
+      case "trust_latexmkrc":
+        calls.push({ cmd, args });
+        w.__rcTrusted = true;
+        return null;
       case "forward_locate":
       case "locate_source":
         calls.push({ cmd, args });

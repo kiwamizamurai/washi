@@ -9,12 +9,15 @@ import { menuActions } from "./actions";
 import {
   initialFile,
   jumpToSource,
+  latexmkrcStatus,
   print,
+  readText as readFileText,
   render,
   renderBuffer,
   renderText,
   setDirty,
   supportedExtensions,
+  trustLatexmkrc,
   watch,
 } from "./api";
 import { interpretPaste } from "./clipboard";
@@ -55,6 +58,30 @@ function debounce(fn: () => void, ms: number) {
 }
 
 const recentChanged = { current: () => {} };
+const rcTrusted = { current: () => {} };
+const declinedRc = new Set<string>();
+
+async function askAboutLatexmkrc(path: string) {
+  if (extensionOf(path) !== "tex" && extensionOf(path) !== "latex") return;
+  const status = await latexmkrcStatus(path).catch(() => null);
+  if (!status || status.trusted || declinedRc.has(status.file)) return;
+  const dialog = byId("trust") as HTMLDialogElement;
+  const head = await readFileText(status.file).then((d) => d.text.split("\n").slice(0, 14).join("\n")).catch(() => "");
+  dialog.querySelector("p")!.textContent = `This folder has a ${basename(status.file)}, which can run commands on your computer. Washi has not used it.`;
+  dialog.querySelector("code")!.textContent = status.file;
+  dialog.querySelector("pre")!.textContent = head;
+  const choice = await new Promise<string>((resolve) => {
+    dialog.addEventListener("close", () => resolve(dialog.returnValue), { once: true });
+    dialog.returnValue = "";
+    dialog.showModal();
+  });
+  if (choice === "allow") {
+    await trustLatexmkrc(path);
+    rcTrusted.current();
+  } else {
+    declinedRc.add(status.file);
+  }
+}
 
 const host: Host = {
   async render(path) {
@@ -73,6 +100,7 @@ const host: Host = {
     recentChanged.current();
     await getCurrentWindow().setTitle(`${basename(path)} — Washi`);
     await watch(path);
+    void askAboutLatexmkrc(path);
   },
   async pasted() {
     await getCurrentWindow().setTitle("Pasted text — Washi");
@@ -123,6 +151,7 @@ async function main() {
     );
   };
   recentChanged.current = showRecent;
+  rcTrusted.current = () => void viewer.reload();
   byId("clear-recent").addEventListener("click", () => {
     clearRecent();
     showRecent();

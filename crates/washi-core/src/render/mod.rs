@@ -2,12 +2,14 @@ mod autolink;
 mod deps;
 mod detect;
 pub use detect::extension_of_text;
+pub use tex::RcStatus;
 mod markdown;
 mod mermaid;
 mod pdf;
 mod process;
 mod synctex;
 mod tex;
+mod trust;
 pub mod tools;
 mod offsets;
 mod typst;
@@ -208,6 +210,14 @@ pub fn complete(path: &Path, text: &str, offset: usize, explicit: bool) -> Resul
         Some(renderer) => renderer.complete(path, text, offset, explicit),
         None => Ok(Completions { offset, items: Vec::new() }),
     }
+}
+
+pub fn latexmkrc_status(path: &Path) -> Option<RcStatus> {
+    tex::rc_status(path)
+}
+
+pub fn trust_latexmkrc(path: &Path) -> Result<(), String> {
+    tex::trust_rc(path)
 }
 
 pub fn render_text(text: &str) -> Result<Output, String> {

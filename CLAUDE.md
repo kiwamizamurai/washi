@@ -69,12 +69,32 @@ pnpm dev
 - 契約テスト（`cli/tests.rs` の `contract_*`）がキー集合・型・ストリームを固定している。落ちたら、テストを直す前に「契約を変えてよいか」を判断する。`readme_documents_the_contract` が、`ErrorKind` や形式名の README への書き忘れを検出する。
 - 引数なしの `washi` はフォアグラウンドでアプリを起動する（Finder が同じバイナリを引数なしで起動するため。切り離して戻る挙動に変えない）。
 
+## 規約
+
+- コードにコメントを書かない（Rust の `///` も、docstring も含む）。意図は名前とテストで表す。
+- UI の文言とエラーメッセージ、コミットメッセージは英語。
+
+## 画面の補助機能の構成
+
+- コマンドパレット（⌘K）: `src/palette/`。`commands.ts` のコマンド ID は `menu.rs` / `actions.ts` の ID と同じ（テストが突き合わせる）。`match.ts` があいまい検索、`items.ts` が並べ替え、`palette.ts` が `<dialog>`。
+- 最近のファイル: `src/recent.ts`（localStorage、最大 8 件）。起動画面とパレットが使う。
+- 検索の件数: `src/search-count.ts`（数え方）と `src/search-source.ts`（見えている文書の文字列と選択位置）。`window.find` はページ全体を探してフォーカスを動かすので使わず、数えた一致を選択して移動する。
+- 読み進んだ割合の線: `src/progress.ts`。
+- ランディング（`docs/`）は、HTML と CSS に、機能紹介のアニメーション用の GSAP（cdnjs）だけ。
+
+## LaTeX の注意
+
+- latexmk には `-pdf` を渡さない（`.latexmkrc` のエンジン指定を上書きするため）。`-e '$pdf_mode = 1 if !$pdf_mode;'` で、rc が決めていないときだけ PDF にする。
+- 文書のフォルダの `latexmkrc` / `.latexmkrc` は任意のコードを実行できるので、内容のハッシュで「信頼済み」を記録するまで使わない（`render/trust.rs`）。未信頼のときは `-norc` に、自分のホームの rc だけ `-r` で読み直す。確認は `.tex` を開いたときの `<dialog id="trust">`。
+- `% !TEX root = main.tex` は `tex.rs` の `magic_root` が読み、ルートをビルドする。章に未保存の変更があるあいだは、直前のビルドを見せる。
+- 失敗時の 1 行目の案内は `failure_hint`（biber、shell-escape、pLaTeX、`\documentclass` なし）。
+
 ## CI とリリース
 
 - `.github/workflows/ci.yml`: `washi-core` のテスト（Linux、Tauri なし）とアプリ全体のテスト・ビルド（macOS）。毎回は走らせない方針なので、手動実行（`workflow_dispatch`）のみ。
 - `.github/workflows/release.yml`: GitHub Release を公開（publish）すると起動する（`gh release create v0.1.0 --generate-notes` など）。そのタグを checkout し、タグが `v<major>.<minor>.<patch>` の形で、`package.json` / `tauri.conf.json` / `src-tauri/Cargo.toml` のバージョンと一致しないと失敗する。`pnpm release` で `.app` を作り、`Washi-<version>-aarch64.zip` と `.sha256` を、公開済みの Release に `gh release upload` で添付し、`kiwamizamurai/homebrew-tap` の `Casks/washi.rb` を生成して push する（secret `HOMEBREW_TAP_TOKEN` が必要。未設定なら、この tap の更新だけ警告を出して飛ばす）。Actions から `tag` を指定して手動で再実行もできる。
 - 配布は Apple Silicon の macOS のみ。ad-hoc 署名なので Cask の `postflight` で quarantine を外している。LaTeX エンジンは同梱せず、Cask の `depends_on formula: "tectonic"` で入れる。
-- ワークフローはまだ GitHub 上で実行していない（Cask 生成部分だけローカルで再現して構文を確認した）。
+- v1.0.0 のリリースで `release.yml` は実際に動いた。`HOMEBREW_TAP_TOKEN` が未設定の間は、tap の更新が警告つきで飛ばされるので、リリースのあとに `kiwamizamurai/homebrew-tap` の `Casks/washi.rb` の `version` と `sha256` を手で更新する。アクションはコミットの SHA で固定している（コメントを書かない方針なので、版は SHA から引く）。
 
 ## 注意点
 

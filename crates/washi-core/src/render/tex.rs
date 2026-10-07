@@ -8,11 +8,13 @@ use std::{
 };
 
 use regex::Regex;
+use serde::Serialize;
 
 use super::{
     process::{self, Job, RunError},
     synctex::SyncTex,
     tools::find_tool,
+    trust::{self, Trust},
     Output, PreviewPosition, Rendered, Renderer, SourceLocation,
 };
 
@@ -265,7 +267,8 @@ pub struct SystemTexEngine;
 impl TexEngine for SystemTexEngine {
     fn compile(&self, source: &Path, out_dir: &Path, cwd: &Path) -> Result<(), String> {
         let text = fs::read_to_string(source).unwrap_or_default();
-        let (tool, mut command) = command_for(source, out_dir).ok_or(
+        let untrusted_rc = trust::project_rc(cwd).is_some_and(|rc| !Trust::system().is_trusted(&rc));
+        let (tool, mut command) = command_for(source, out_dir, untrusted_rc).ok_or(
             "neither latexmk nor tectonic was found; install one, for example with `brew install tectonic`",
         )?;
         let job = Job::start(source);
@@ -285,12 +288,41 @@ impl TexEngine for SystemTexEngine {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
         let details = format!("{tool} failed:\n{stderr}\n{}", tail(&stdout, 4000));
-        let hint = failure_hint(tool, &text, &format!("{stderr}\n{stdout}"), find_tool("biber").is_some());
+        let rc_ignored = tool == "latexmk" && untrusted_rc;
+        let hint = failure_hint(tool, &text, &format!("{stderr}\n{stdout}"), find_tool("biber").is_some(), rc_ignored);
         Err(match hint {
             Some(hint) => format!("{hint}\n\n{details}"),
             None => details,
         })
     }
+}
+
+#[derive(Serialize)]
+pub struct RcStatus {
+    pub file: String,
+    pub trusted: bool,
+}
+
+fn status_for(path: &Path, latexmk_available: bool, trust: &Trust) -> Option<RcStatus> {
+    if !latexmk_available {
+        return None;
+    }
+    let extension = path.extension()?.to_str()?.to_ascii_lowercase();
+    if extension != "tex" && extension != "latex" {
+        return None;
+    }
+    let source = effective_source(path);
+    let rc = trust::project_rc(source.parent()?)?;
+    Some(RcStatus { file: rc.to_string_lossy().into_owned(), trusted: trust.is_trusted(&rc) })
+}
+
+pub fn rc_status(path: &Path) -> Option<RcStatus> {
+    status_for(path, find_tool("latexmk").is_some(), &Trust::system())
+}
+
+pub fn trust_rc(path: &Path) -> Result<(), String> {
+    let status = status_for(path, true, &Trust::system()).ok_or("this folder has no .latexmkrc")?;
+    Trust::system().trust(Path::new(&status.file))
 }
 
 fn uses_biber(text: &str) -> bool {
@@ -299,7 +331,7 @@ fn uses_biber(text: &str) -> bool {
         .any(|line| BIBLATEX.captures(line).is_some_and(|c| !c.get(1).is_some_and(|o| BIBTEX_BACKEND.is_match(o.as_str()))))
 }
 
-fn failure_hint(tool: &str, text: &str, output: &str, biber_found: bool) -> Option<String> {
+fn failure_hint(tool: &str, text: &str, output: &str, biber_found: bool, rc_ignored: bool) -> Option<String> {
     let out = output.to_lowercase();
     if out.contains("shell-escape") || out.contains("shell escape") {
         return Some(
@@ -308,7 +340,9 @@ fn failure_hint(tool: &str, text: &str, output: &str, biber_found: bool) -> Opti
         );
     }
     if out.contains("platex2e") {
-        return Some(if tool == "tectonic" {
+        return Some(if rc_ignored {
+            "This folder has a .latexmkrc that Washi did not use, because you have not allowed it. Reopen the file and choose to use it."
+        } else if tool == "tectonic" {
             "This document needs pLaTeX or upLaTeX, which tectonic cannot build. Install TeX Live with latexmk and add a .latexmkrc that selects platex."
         } else {
             "latexmk built this with pdfLaTeX, but the document needs pLaTeX. Add a .latexmkrc such as: $latex = 'platex'; $dvipdf = 'dvipdfmx %O -o %D %S'; $pdf_mode = 3;"
@@ -330,20 +364,30 @@ fn failure_hint(tool: &str, text: &str, output: &str, biber_found: bool) -> Opti
     }
     None
 }
-fn latexmk_args(source: &Path, out_dir: &Path) -> Vec<OsString> {
-    let mut args: Vec<OsString> = ["-e", "$pdf_mode = 1 if !$pdf_mode;", "-synctex=1", "-interaction=nonstopmode", "-halt-on-error", "-outdir"]
-        .into_iter()
-        .map(OsString::from)
-        .collect();
+fn latexmk_args(source: &Path, out_dir: &Path, isolation: Option<Option<PathBuf>>) -> Vec<OsString> {
+    let mut args: Vec<OsString> = Vec::new();
+    if let Some(user_rc) = isolation {
+        args.push("-norc".into());
+        if let Some(user_rc) = user_rc {
+            args.push("-r".into());
+            args.push(user_rc.into());
+        }
+    }
+    args.extend(
+        ["-e", "$pdf_mode = 1 if !$pdf_mode;", "-synctex=1", "-interaction=nonstopmode", "-halt-on-error", "-outdir"]
+            .into_iter()
+            .map(OsString::from),
+    );
     args.push(out_dir.into());
     args.push(source.into());
     args
 }
 
-fn command_for(source: &Path, out_dir: &Path) -> Option<(&'static str, Command)> {
+fn command_for(source: &Path, out_dir: &Path, untrusted_rc: bool) -> Option<(&'static str, Command)> {
     if let Some(latexmk) = find_tool("latexmk") {
         let mut command = Command::new(latexmk);
-        command.args(latexmk_args(source, out_dir));
+        let isolation = untrusted_rc.then(trust::user_rc);
+        command.args(latexmk_args(source, out_dir, isolation));
         return Some(("latexmk", command));
     }
     let tectonic: PathBuf = find_tool("tectonic")?;
@@ -653,7 +697,7 @@ mod tests {
 
     #[test]
     fn latexmk_leaves_the_engine_to_the_rc_file() {
-        let args: Vec<String> = latexmk_args(Path::new("/d/a.tex"), Path::new("/o")).iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        let args: Vec<String> = latexmk_args(Path::new("/d/a.tex"), Path::new("/o"), None).iter().map(|a| a.to_string_lossy().into_owned()).collect();
         assert!(!args.iter().any(|a| a == "-pdf"), "-pdf would override $pdf_mode from .latexmkrc: {args:?}");
         let at = args.iter().position(|a| a == "-e").expect("an -e argument");
         assert_eq!(args[at + 1], "$pdf_mode = 1 if !$pdf_mode;");
@@ -674,21 +718,21 @@ mod tests {
     #[test]
     fn failures_come_with_a_plain_first_line() {
         let biblatex = "\\documentclass{article}\\usepackage{biblatex}";
-        let hint = failure_hint("tectonic", biblatex, "error: No such file or directory (os error 2)", false).unwrap();
+        let hint = failure_hint("tectonic", biblatex, "error: No such file or directory (os error 2)", false, false).unwrap();
         assert!(hint.contains("biber was not found"), "{hint}");
-        assert!(failure_hint("tectonic", biblatex, "error: No such file or directory (os error 2)", true).is_none(), "biber is installed: no biber hint");
-        assert!(failure_hint("tectonic", "\\documentclass{article}", "error: No such file or directory", false).is_none(), "not a biblatex document");
+        assert!(failure_hint("tectonic", biblatex, "error: No such file or directory (os error 2)", true, false).is_none(), "biber is installed: no biber hint");
+        assert!(failure_hint("tectonic", "\\documentclass{article}", "error: No such file or directory", false, false).is_none(), "not a biblatex document");
 
-        let minted = failure_hint("tectonic", "", "Package minted Error: You must invoke LaTeX with the -shell-escape flag.", true).unwrap();
+        let minted = failure_hint("tectonic", "", "Package minted Error: You must invoke LaTeX with the -shell-escape flag.", true, false).unwrap();
         assert!(minted.contains("shell escape"), "{minted}");
 
         let platex = "LaTeX Error: This file needs format `pLaTeX2e' but this is `pdfLaTeX'.";
-        assert!(failure_hint("tectonic", "", platex, true).unwrap().contains("tectonic cannot build"));
-        assert!(failure_hint("latexmk", "", platex, true).unwrap().contains(".latexmkrc"));
+        assert!(failure_hint("tectonic", "", platex, true, false).unwrap().contains("tectonic cannot build"));
+        assert!(failure_hint("latexmk", "", platex, true, false).unwrap().contains(".latexmkrc"));
 
-        let chapter = failure_hint("tectonic", "\\section{One}", "! Undefined control sequence.", true).unwrap();
+        let chapter = failure_hint("tectonic", "\\section{One}", "! Undefined control sequence.", true, false).unwrap();
         assert!(chapter.contains("% !TEX root"), "{chapter}");
-        assert!(failure_hint("tectonic", "\\documentclass{article}", "! Undefined control sequence.", true).is_none(), "a real document with a typo gets no hint");
+        assert!(failure_hint("tectonic", "\\documentclass{article}", "! Undefined control sequence.", true, false).is_none(), "a real document with a typo gets no hint");
     }
 
     #[test]
@@ -716,5 +760,53 @@ mod tests {
         let err = TexRenderer(SystemTexEngine).render(&doc).err().expect("biblatex fails without biber");
         assert!(err.lines().next().unwrap().contains("biber was not found"), "{err}");
         fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn an_untrusted_project_rc_is_left_out_and_only_the_users_own_is_loaded() {
+        let args = |isolation| -> Vec<String> {
+            latexmk_args(Path::new("/d/a.tex"), Path::new("/o"), isolation).iter().map(|a| a.to_string_lossy().into_owned()).collect()
+        };
+        assert_eq!(args(None)[0], "-e", "trusted or absent: latexmk reads every rc file as usual");
+
+        let isolated = args(Some(Some(PathBuf::from("/home/me/.latexmkrc"))));
+        assert_eq!(&isolated[..3], ["-norc", "-r", "/home/me/.latexmkrc"]);
+        assert!(isolated.iter().any(|a| a == "-e"), "still asks for a PDF when no rc chose one");
+
+        let no_user_rc = args(Some(None));
+        assert_eq!(no_user_rc[0], "-norc");
+        assert!(!no_user_rc.iter().any(|a| a == "-r"));
+    }
+
+    #[test]
+    fn the_rc_status_reports_a_project_rc_only_when_latexmk_would_use_it() {
+        let dir = project("rc-status");
+        fs::create_dir_all(dir.join("chapters")).unwrap();
+        let main = dir.join("main.tex");
+        let chapter = dir.join("chapters/one.tex");
+        fs::write(&main, "\\documentclass{article}").unwrap();
+        fs::write(&chapter, "% !TEX root = ../main.tex\n").unwrap();
+        let trust = Trust::at(dir.join("store/trusted"));
+
+        assert!(status_for(&main, true, &trust).is_none(), "no rc file in the folder");
+        fs::write(dir.join(".latexmkrc"), "$pdf_mode = 3;").unwrap();
+        let status = status_for(&main, true, &trust).unwrap();
+        assert!(!status.trusted);
+        assert!(status.file.ends_with(".latexmkrc"));
+        assert!(status_for(&main, false, &trust).is_none(), "without latexmk the rc file is never used");
+        assert!(status_for(&dir.join("notes.md"), true, &trust).is_none(), "only LaTeX files");
+        assert!(status_for(&chapter, true, &trust).is_some(), "a chapter uses its main file's folder");
+
+        trust.trust(Path::new(&status.file)).unwrap();
+        assert!(status_for(&main, true, &trust).unwrap().trusted);
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn a_pdftex_failure_blames_the_ignored_rc_file_when_there_was_one() {
+        let platex = "LaTeX Error: This file needs format `pLaTeX2e' but this is `pdfLaTeX'.";
+        let ignored = failure_hint("latexmk", "", platex, true, true).unwrap();
+        assert!(ignored.contains("did not use") && ignored.contains("allowed"), "{ignored}");
+        assert!(failure_hint("latexmk", "", platex, true, false).unwrap().contains("Add a .latexmkrc"));
     }
 }

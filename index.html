@@ -45,6 +45,17 @@
       <input type="text" role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list" placeholder="Type a command, a file, or #heading" autocomplete="off" spellcheck="false" />
       <ul id="palette-list" role="listbox"></ul>
     </dialog>
+    <dialog id="trust">
+      <form method="dialog">
+        <p></p>
+        <code></code>
+        <pre></pre>
+        <div class="actions">
+          <button value="deny">Don't use it</button>
+          <button value="allow" autofocus>Use it</button>
+        </div>
+      </form>
+    </dialog>
     <dialog id="confirm">
       <form method="dialog">
         <p></p>

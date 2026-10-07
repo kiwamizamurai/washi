@@ -130,6 +130,15 @@ export interface LocatedSource {
 export const locateSource = (path: string, page: number, x: number, y: number) =>
   invoke<LocatedSource | null>("locate_source", { path, page, x, y });
 
+export interface RcStatus {
+  file: string;
+  trusted: boolean;
+}
+
+export const latexmkrcStatus = (path: string) => invoke<RcStatus | null>("latexmkrc_status", { path });
+
+export const trustLatexmkrc = (path: string) => invoke<void>("trust_latexmkrc", { path });
+
 export const setDirty = (dirty: boolean) => invoke<void>("set_dirty", { dirty });
 
 export const supportedExtensions =() =>
