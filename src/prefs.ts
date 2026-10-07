@@ -1,3 +1,5 @@
+import { EDITOR_FONT_SIZE_DEFAULT, EDITOR_FONT_SIZE_RANGE } from "./zoom";
+
 export const THEMES = ["system", "light", "dark"] as const;
 export const WIDTHS = ["narrow", "wide", "full"] as const;
 
@@ -11,9 +13,11 @@ export interface Prefs {
   autosave: boolean;
   syncCursor: boolean;
   editorWidth: number;
+  editorFontSize: number;
 }
 
 export const EDITOR_WIDTH_RANGE = { min: 25, max: 75 } as const;
+
 
 export const DEFAULT_PREFS: Prefs = {
   theme: "system",
@@ -22,6 +26,7 @@ export const DEFAULT_PREFS: Prefs = {
   autosave: false,
   syncCursor: true,
   editorWidth: 50,
+  editorFontSize: EDITOR_FONT_SIZE_DEFAULT,
 };
 
 const KEY = "washi:prefs";
@@ -46,6 +51,11 @@ const percent = (value: unknown, fallback: number) =>
     ? Math.min(EDITOR_WIDTH_RANGE.max, Math.max(EDITOR_WIDTH_RANGE.min, value))
     : fallback;
 
+const px = (value: unknown, fallback: number) =>
+  typeof value === "number" && Number.isFinite(value)
+    ? Math.min(EDITOR_FONT_SIZE_RANGE.max, Math.max(EDITOR_FONT_SIZE_RANGE.min, Math.round(value)))
+    : fallback;
+
 export function loadPrefs(store: Store | null = defaultStore()): Prefs {
   try {
     const raw = store?.getItem(KEY);
@@ -57,6 +67,7 @@ export function loadPrefs(store: Store | null = defaultStore()): Prefs {
       autosave: flag(parsed.autosave, DEFAULT_PREFS.autosave),
       syncCursor: flag(parsed.syncCursor, DEFAULT_PREFS.syncCursor),
       editorWidth: percent(parsed.editorWidth, DEFAULT_PREFS.editorWidth),
+      editorFontSize: px(parsed.editorFontSize, DEFAULT_PREFS.editorFontSize),
     };
   } catch {
     return { ...DEFAULT_PREFS };

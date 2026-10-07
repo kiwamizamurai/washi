@@ -4,6 +4,7 @@ export function applyPrefs(root: HTMLElement, prefs: Prefs) {
   if (prefs.theme === "system") root.removeAttribute("data-theme");
   else root.setAttribute("data-theme", prefs.theme);
   root.setAttribute("data-width", prefs.width);
+  root.style.setProperty("--editor-font-size", `${prefs.editorFontSize}px`);
 }
 
 export function isDark(root: HTMLElement = document.documentElement) {

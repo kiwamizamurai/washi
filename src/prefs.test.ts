@@ -16,7 +16,7 @@ describe("prefs", () => {
 
   it("round-trips valid values", () => {
     const store = memory();
-    const prefs = { theme: "dark", width: "wide", outline: true, autosave: true, syncCursor: false, editorWidth: 40 } as const;
+    const prefs = { theme: "dark", width: "wide", outline: true, autosave: true, syncCursor: false, editorWidth: 40, editorFontSize: 16 } as const;
     savePrefs(prefs, store);
     expect(loadPrefs(store)).toEqual(prefs);
   });
@@ -49,3 +49,15 @@ describe("prefs", () => {
     expect(() => savePrefs(DEFAULT_PREFS, throwing)).not.toThrow();
   });
 });
+
+  it("clamps the editor font size and rejects non-numbers", () => {
+    const big = memory(JSON.stringify({ editorFontSize: 99 }));
+    expect(loadPrefs(big).editorFontSize).toBe(24);
+    expect(loadPrefs(memory(JSON.stringify({ editorFontSize: 1 }))).editorFontSize).toBe(10);
+    expect(loadPrefs(memory(JSON.stringify({ editorFontSize: "14" }))).editorFontSize).toBe(14);
+    expect(loadPrefs(memory(JSON.stringify({ editorFontSize: null }))).editorFontSize).toBe(14);
+  });
+
+  it("rounds fractional editor font sizes", () => {
+    expect(loadPrefs(memory(JSON.stringify({ editorFontSize: 15.6 }))).editorFontSize).toBe(16);
+  });

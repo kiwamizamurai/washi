@@ -270,6 +270,10 @@ export class EditingController {
     if (outcome === "saved") this.deps.toast("Saved", 1200);
   }
 
+  editorFocused() {
+    return this.handle?.hasFocus() ?? false;
+  }
+
   async diskChanged(): Promise<boolean> {
     const session = this.session;
     if (!session) return false;
