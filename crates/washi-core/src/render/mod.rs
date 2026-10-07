@@ -212,6 +212,14 @@ pub fn complete(path: &Path, text: &str, offset: usize, explicit: bool) -> Resul
     }
 }
 
+pub fn cleanup_temp() {
+    tex::cleanup_temp();
+}
+
+pub fn cleanup_own_temp() {
+    tex::cleanup_own_temp();
+}
+
 pub fn latexmkrc_status(path: &Path) -> Option<RcStatus> {
     tex::rc_status(path)
 }

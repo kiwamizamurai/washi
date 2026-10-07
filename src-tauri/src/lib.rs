@@ -56,6 +56,7 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            std::thread::spawn(washi_core::render::cleanup_temp);
             launch::open_documents(app.handle(), launch::openable_paths(std::env::args().skip(1)));
             Ok(())
         })
@@ -63,6 +64,9 @@ pub fn run() {
         .expect("error while building tauri application");
 
     app.run(|handle, event| {
+        if let tauri::RunEvent::Exit = &event {
+            washi_core::render::cleanup_own_temp();
+        }
         #[cfg(target_os = "macos")]
         if let tauri::RunEvent::Opened { urls } = &event {
             let paths = urls.iter().filter_map(|u| u.to_file_path().ok());

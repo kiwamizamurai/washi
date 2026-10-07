@@ -65,10 +65,16 @@ pub fn markdown(source: &str, base: &Path) -> Vec<PathBuf> {
 
 static TEX_COMMAND: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"\\(input|include|subfile|bibliography|addbibresource|includegraphics|includepdf|lstinputlisting|verbatiminput|usepackage|RequirePackage|documentclass)\*?\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}",
+        r"\\(input|include|subfile|InputIfFileExists|bibliography|addbibresource|addglobalbib|addsectionbib|includegraphics|includesvg|includepdf|lstinputlisting|verbatiminput|usepackage|RequirePackage|documentclass)\*?\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}",
     )
     .unwrap()
 });
+static TEX_INPUT_BARE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\input[ \t]+([^\s{}\\%]+)").unwrap());
+static TEX_DIR_FILE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\\(?:import|subimport|includefrom|inputfrom|subincludefrom|subinputfrom)\*?\s*\{([^}]*)\}\s*\{([^}]*)\}").unwrap()
+});
+static TEX_INPUTMINTED: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\\inputminted\*?\s*(?:\[[^\]]*\])?\s*\{[^}]*\}\s*\{([^}]*)\}").unwrap());
 static TEX_GRAPHICSPATH: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\\graphicspath\s*\{((?:\s*\{[^}]*\}\s*)+)\}").unwrap());
 static BRACED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{([^}]*)\}").unwrap());
@@ -94,7 +100,7 @@ fn strip_tex_comments(source: &str) -> String {
 fn read_source(file: &Path, main: &Path, main_text: Option<&str>) -> Option<String> {
     match main_text {
         Some(text) if file == main => Some(text.to_owned()),
-        _ => fs::read_to_string(file).ok(),
+        _ => fs::read(file).ok().map(|bytes| String::from_utf8_lossy(&bytes).into_owned()),
     }
 }
 
@@ -137,9 +143,9 @@ pub fn latex_text(main: &Path, main_text: Option<&str>) -> Vec<PathBuf> {
 
         for caps in TEX_COMMAND.captures_iter(&source) {
             let command = &caps[1];
-            for name in caps[2].split(',').map(str::trim).filter(|n| !n.is_empty()) {
+            for name in caps[2].split(',').map(|n| n.trim().trim_matches('"')).filter(|n| !n.is_empty()) {
                 match command {
-                    "input" | "include" | "subfile" => {
+                    "input" | "include" | "subfile" | "InputIfFileExists" => {
                         let path = tex_file(root, name);
                         dirs.extend(path.parent().map(Path::to_path_buf));
                         queue.push(path);
@@ -155,6 +161,19 @@ pub fn latex_text(main: &Path, main_text: Option<&str>) -> Vec<PathBuf> {
                     _ => dirs.extend(rooted(root, name).parent().map(Path::to_path_buf)),
                 }
             }
+        }
+        for caps in TEX_INPUT_BARE.captures_iter(&source) {
+            let path = tex_file(root, caps[1].trim_matches('"'));
+            dirs.extend(path.parent().map(Path::to_path_buf));
+            queue.push(path);
+        }
+        for caps in TEX_DIR_FILE.captures_iter(&source) {
+            let path = tex_file(&rooted(root, caps[1].trim().trim_matches('"')), caps[2].trim().trim_matches('"'));
+            dirs.extend(path.parent().map(Path::to_path_buf));
+            queue.push(path);
+        }
+        for caps in TEX_INPUTMINTED.captures_iter(&source) {
+            dirs.extend(rooted(root, caps[1].trim().trim_matches('"')).parent().map(Path::to_path_buf));
         }
         for caps in TEX_GRAPHICSPATH.captures_iter(&source) {
             for dir in BRACED.captures_iter(&caps[1]) {
@@ -392,5 +411,50 @@ mod tests {
         p.file("parts/a.typ", "");
         let main = p.file("main.typ", "= plain");
         assert_eq!(typst_text(&main, Some("#include \"parts/a.typ\"")), vec![p.dir("parts")]);
+    }
+
+    #[test]
+    fn latex_follows_the_less_common_include_forms() {
+        let forms = [
+            ("\\input b/x", "b"),
+            ("\\input{\"o/x\"}", "o"),
+            ("\\InputIfFileExists{l/x}{}{}", "l"),
+            ("\\import{e/}{x}", "e"),
+            ("\\subimport{f/}{x}", "f"),
+            ("\\includefrom{c/}{x}", "c"),
+            ("\\subinputfrom{d/}{x}", "d"),
+            ("\\inputminted[linenos]{python}{k/code.py}", "k"),
+            ("\\includesvg[width=3cm]{g/pic}", "g"),
+            ("\\addglobalbib{h/refs.bib}", "h"),
+            ("\\addsectionbib[location=local]{i/refs.bib}", "i"),
+        ];
+        for (body, folder) in forms {
+            let p = Project::new("forms");
+            fs::create_dir_all(p.dir(folder)).unwrap();
+            let main = p.file("main.tex", &format!("\\documentclass{{article}}\\begin{{document}}{body}\\end{{document}}"));
+            assert!(latex(&main).contains(&p.dir(folder)), "{body} should watch {folder}: {:?}", latex(&main));
+        }
+    }
+
+    #[test]
+    fn latex_follows_a_file_reached_through_import() {
+        let p = Project::new("import-chain");
+        p.file("parts/a.tex", "\\input{figs/inner}");
+        fs::create_dir_all(p.dir("figs")).unwrap();
+        let main = p.file("main.tex", "\\subimport{parts/}{a}");
+        let dirs = latex(&main);
+        assert!(dirs.contains(&p.dir("parts")) && dirs.contains(&p.dir("figs")), "{dirs:?}");
+    }
+
+    #[test]
+    fn latex_scans_files_that_are_not_utf8() {
+        let p = Project::new("sjis");
+        fs::create_dir_all(p.dir("inc")).unwrap();
+        let mut bytes = b"\\documentclass{article}\\begin{document}".to_vec();
+        bytes.extend_from_slice(&[0x93, 0xfa, 0x96, 0x7b, 0x8c, 0xea]);
+        bytes.extend_from_slice(b"\\input{inc/a}\\end{document}");
+        let main = p.0.join("main.tex");
+        fs::write(&main, bytes).unwrap();
+        assert!(latex(&main).contains(&p.dir("inc")), "a Shift_JIS main file is still scanned");
     }
 }

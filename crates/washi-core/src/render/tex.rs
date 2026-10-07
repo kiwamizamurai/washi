@@ -5,6 +5,7 @@ use std::{
     path::{Component, Path, PathBuf},
     process::Command,
     sync::LazyLock,
+    time::{Duration, SystemTime},
 };
 
 use regex::Regex;
@@ -20,6 +21,7 @@ use super::{
 
 const MIRROR_PREFIX: &str = ".washi-buf-";
 const STALE_MIRROR_AGE: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+const TEMP_MAX_AGE: Duration = Duration::from_secs(60 * 60);
 const ROOT_SCAN_LINES: usize = 20;
 const ROOT_SCAN_BYTES: u64 = 4096;
 
@@ -30,6 +32,11 @@ static BIBLATEX: LazyLock<Regex> = LazyLock::new(|| {
 });
 static BIBER_MISMATCH: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"biber \(([0-9.]+)\) and biblatex \(([0-9.]+)\) versions are incompatible").unwrap());
+static TEX_ERROR_LINE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?m)^(?:error: )?(?:\./)?([^\s:][^:\n]*\.(?:tex|sty|cls|ltx|def|cfg|bib)):(\d+): (.+?)\s*$").unwrap()
+});
+static TEX_BANG_ERROR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^(?:error: )?! ?(.+?)\s*$").unwrap());
+static TEX_ERROR_LINE_NUMBER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^l\.(\d+)\b").unwrap());
 static BIBTEX_BACKEND: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)backend\s*=\s*bibtex").unwrap());
 
 fn normalize(path: &Path) -> PathBuf {
@@ -244,6 +251,59 @@ fn same_file_from(base: &Path, target: &Path, input: &str) -> bool {
     clean(&resolve_input(base, input)) == clean(target)
 }
 
+fn temp_owner(name: &str) -> Option<u32> {
+    let rest = name.strip_prefix("washi-")?;
+    let rest = rest.strip_prefix("paste-").unwrap_or(rest);
+    if rest.is_empty() || !rest.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    rest.parse().ok()
+}
+
+fn process_is_alive(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        let found = unsafe { libc::kill(pid as libc::pid_t, 0) } == 0;
+        found || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        true
+    }
+}
+
+fn sweep_temp(temp: &Path, own_pid: u32, now: SystemTime, alive: &dyn Fn(u32) -> bool) {
+    let Ok(entries) = fs::read_dir(temp) else { return };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(pid) = name.to_str().and_then(temp_owner) else { continue };
+        if pid == own_pid || alive(pid) {
+            continue;
+        }
+        let old = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|modified| now.duration_since(modified).ok())
+            .is_some_and(|age| age > TEMP_MAX_AGE);
+        if old {
+            let _ = fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
+pub fn cleanup_temp() {
+    sweep_temp(&std::env::temp_dir(), std::process::id(), SystemTime::now(), &process_is_alive);
+}
+
+pub fn cleanup_own_temp() {
+    let pid = std::process::id();
+    for name in [format!("washi-{pid}"), format!("washi-paste-{pid}")] {
+        let _ = fs::remove_dir_all(std::env::temp_dir().join(name));
+    }
+}
+
 fn out_dir_for(path: &Path) -> PathBuf {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -271,16 +331,17 @@ impl TexEngine for SystemTexEngine {
         let text = fs::read_to_string(source).unwrap_or_default();
         let untrusted_rc = trust::project_rc(cwd).is_some_and(|rc| !Trust::system().is_trusted(&rc));
         let (tool, mut command) = command_for(source, out_dir, untrusted_rc).ok_or(
-            "neither latexmk nor tectonic was found; install one, for example with `brew install tectonic`",
+            "no LaTeX engine was found; install tectonic (`brew install tectonic`) or TeX Live",
         )?;
         let job = Job::start(source);
         let timeout = process::timeout_from_env();
         let output = process::run(command.current_dir(cwd), timeout, job.cancelled()).map_err(|e| match e {
             RunError::Spawn(e) => format!("cannot start {tool}: {e}"),
             RunError::TimedOut(limit) => format!(
-                "{tool} was stopped after {} seconds; set {} to change the limit",
+                "{tool} was stopped after {} seconds; set {} to change the limit{}",
                 limit.as_secs(),
                 process::TIMEOUT_ENV,
+                if tool == "tectonic" { ". tectonic downloads what it needs on first use, so try again" } else { "" },
             ),
             RunError::Cancelled => "stopped because a newer render replaced it".to_string(),
         })?;
@@ -291,9 +352,10 @@ impl TexEngine for SystemTexEngine {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let details = format!("{tool} failed:\n{stderr}\n{}", tail(&stdout, 4000));
         let rc_ignored = tool == "latexmk" && untrusted_rc;
-        let hint = failure_hint(tool, &text, &format!("{stderr}\n{stdout}"), find_tool("biber").is_some(), rc_ignored);
-        Err(match hint {
-            Some(hint) => format!("{hint}\n\n{details}"),
+        let combined = format!("{stderr}\n{stdout}");
+        let headline = failure_hint(tool, &text, &combined, find_tool("biber").is_some(), rc_ignored).or_else(|| first_error(&combined));
+        Err(match headline {
+            Some(headline) => format!("{headline}\n\n{details}"),
             None => details,
         })
     }
@@ -319,12 +381,25 @@ fn status_for(path: &Path, latexmk_available: bool, trust: &Trust) -> Option<RcS
 }
 
 pub fn rc_status(path: &Path) -> Option<RcStatus> {
-    status_for(path, find_tool("latexmk").is_some(), &Trust::system())
+    status_for(path, latexmk_usable(&find_tool).is_some(), &Trust::system())
 }
 
 pub fn trust_rc(path: &Path) -> Result<(), String> {
     let status = status_for(path, true, &Trust::system()).ok_or("this folder has no .latexmkrc")?;
     Trust::system().trust(Path::new(&status.file))
+}
+
+fn first_error(output: &str) -> Option<String> {
+    if let Some(c) = TEX_ERROR_LINE.captures(output) {
+        let file = c[1].rsplit('/').next().unwrap_or(&c[1]).trim_start_matches(MIRROR_PREFIX);
+        return Some(format!("{file}:{}: {}", &c[2], c[3].trim_start_matches("! ").trim_end_matches('.')));
+    }
+    let bang = TEX_BANG_ERROR.captures(output)?;
+    let message = bang[1].trim_end_matches('.');
+    Some(match TEX_ERROR_LINE_NUMBER.captures_iter(output).next() {
+        Some(line) => format!("line {}: {message}", &line[1]),
+        None => message.to_owned(),
+    })
 }
 
 fn uses_biber(text: &str) -> bool {
@@ -383,17 +458,26 @@ fn latexmk_args(source: &Path, out_dir: &Path, isolation: Option<Option<PathBuf>
         }
     }
     args.extend(
-        ["-e", "$pdf_mode = 1 if !$pdf_mode;", "-synctex=1", "-interaction=nonstopmode", "-halt-on-error", "-outdir"]
+        ["-e", "$pdf_mode = 1 if !$pdf_mode;", "-synctex=1", "-interaction=nonstopmode", "-file-line-error", "-halt-on-error"]
             .into_iter()
             .map(OsString::from),
     );
-    args.push(out_dir.into());
+    let mut outdir = OsString::from("-outdir=");
+    outdir.push(out_dir);
+    args.push(outdir);
     args.push(source.into());
     args
 }
 
+const ENGINES: [&str; 5] = ["pdflatex", "xelatex", "lualatex", "platex", "uplatex"];
+
+fn latexmk_usable(find: &dyn Fn(&str) -> Option<PathBuf>) -> Option<PathBuf> {
+    let latexmk = find("latexmk")?;
+    ENGINES.iter().any(|engine| find(engine).is_some()).then_some(latexmk)
+}
+
 fn command_for(source: &Path, out_dir: &Path, untrusted_rc: bool) -> Option<(&'static str, Command)> {
-    if let Some(latexmk) = find_tool("latexmk") {
+    if let Some(latexmk) = latexmk_usable(&find_tool) {
         let mut command = Command::new(latexmk);
         let isolation = untrusted_rc.then(trust::user_rc);
         command.args(latexmk_args(source, out_dir, isolation)).env("PATH", path_with_fallbacks());
@@ -712,7 +796,9 @@ mod tests {
         let at = args.iter().position(|a| a == "-e").expect("an -e argument");
         assert_eq!(args[at + 1], "$pdf_mode = 1 if !$pdf_mode;");
         assert_eq!(args.last().unwrap(), "/d/a.tex");
-        assert!(args.windows(2).any(|w| w[0] == "-outdir" && w[1] == "/o"));
+        assert!(args.iter().any(|a| a == "-outdir=/o"), "latexmk only accepts -outdir=DIR: {args:?}");
+        assert!(!args.iter().any(|a| a == "-outdir"), "a bare -outdir is an unknown option: {args:?}");
+        assert!(args.iter().any(|a| a == "-file-line-error"));
     }
 
     #[test]
@@ -872,5 +958,211 @@ mod tests {
         let first = err.lines().next().unwrap();
         assert!(first.contains("do not match"), "biber was not reached: {err}");
         fs::remove_dir_all(dir).ok();
+    }
+
+    struct EnvGuard(Vec<(&'static str, Option<std::ffi::OsString>)>);
+
+    impl EnvGuard {
+        fn set(vars: &[(&'static str, std::ffi::OsString)]) -> Self {
+            let saved = vars.iter().map(|(k, _)| (*k, std::env::var_os(k))).collect();
+            for (k, v) in vars {
+                std::env::set_var(k, v);
+            }
+            Self(saved)
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for (k, v) in self.0.drain(..) {
+                match v {
+                    Some(v) => std::env::set_var(k, v),
+                    None => std::env::remove_var(k),
+                }
+            }
+        }
+    }
+
+    fn real_latexmk_with_fake_engines(name: &str) -> Option<(PathBuf, EnvGuard)> {
+        use std::os::unix::fs::PermissionsExt;
+        let script = std::env::var_os("WASHI_TEST_LATEXMK_PL")?;
+        let bin = project(&format!("bin-{name}")).join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        let write = |file: &str, body: String| {
+            let path = bin.join(file);
+            fs::write(&path, body).unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        };
+        write("latexmk", format!("#!/bin/sh\nexec perl \"{}\" \"$@\"\n", PathBuf::from(&script).display()));
+        write(
+            "fake-engine",
+            "#!/bin/sh\noutdir=.; src=; name=$(basename \"$0\")\nfor a in \"$@\"; do case \"$a\" in -output-directory=*) outdir=\"${a#-output-directory=}\";; -*) ;; *) src=\"$a\";; esac; done\nstem=$(basename \"$src\" .tex)\nmkdir -p \"$outdir\"\necho \"$name $*\" >> \"$LMK_LOG\"\nprintf '%%PDF-fake' > \"$outdir/$stem.pdf\"\nprintf '%%DVI-fake' > \"$outdir/$stem.dvi\"\nprintf 'This is TeX\\nOutput written on %s.pdf (1 page).\\n' \"$stem\" > \"$outdir/$stem.log\"\n: > \"$outdir/$stem.aux\"\n".into(),
+        );
+        for engine in ["pdflatex", "xelatex", "lualatex", "platex", "dvipdfmx"] {
+            std::os::unix::fs::symlink("fake-engine", bin.join(engine)).unwrap();
+        }
+        let home = bin.parent().unwrap().join("home");
+        fs::create_dir_all(&home).unwrap();
+        let log = bin.parent().unwrap().join("engine.log");
+        let path = std::env::join_paths([bin.clone(), PathBuf::from("/usr/bin"), PathBuf::from("/bin")]).unwrap();
+        let guard = EnvGuard::set(&[
+            ("PATH", path),
+            ("HOME", home.into()),
+            ("LMK_LOG", log.clone().into()),
+            ("WASHI_TRUST_FILE", bin.parent().unwrap().join("trusted").into()),
+        ]);
+        Some((log, guard))
+    }
+
+    #[test]
+    #[cfg(unix)]
+    #[ignore = "runs the real latexmk script (set WASHI_TEST_LATEXMK_PL) with fake engines; run with --test-threads=1"]
+    fn real_latexmk_builds_a_document_and_respects_the_rc_file() {
+        let Some((log, _env)) = real_latexmk_with_fake_engines("real") else { return };
+        let dir = project("real-latexmk");
+        let doc = dir.join("doc.tex");
+        fs::write(&doc, "\\documentclass{article}\\begin{document}x\\end{document}").unwrap();
+        let renderer = TexRenderer(SystemTexEngine);
+
+        match renderer.render(&doc).unwrap_or_else(|e| panic!("latexmk did not build: {e}")) {
+            Output::Pdf(bytes) => assert_eq!(bytes, b"%PDF-fake"),
+            Output::Html(_) => panic!("expected a PDF"),
+        }
+        let first = fs::read_to_string(&log).unwrap();
+        assert!(first.starts_with("pdflatex "), "no rc file: pdfLaTeX: {first}");
+        assert!(first.contains("-file-line-error") && first.contains("-synctex=1"), "{first}");
+
+        let edit = |n: u32| fs::write(&doc, format!("\\documentclass{{article}}\\begin{{document}}edit {n}\\end{{document}}")).unwrap();
+        fs::write(dir.join(".latexmkrc"), "$latex = 'platex %O %S';\n$dvipdf = 'dvipdfmx %O -o %D %S';\n$pdf_mode = 3;\n").unwrap();
+        edit(1);
+        fs::remove_file(&log).ok();
+        renderer.render(&doc).unwrap();
+        assert!(fs::read_to_string(&log).unwrap().starts_with("pdflatex "), "an untrusted project rc is not used");
+
+        Trust::system().trust(&dir.join(".latexmkrc")).unwrap();
+        edit(2);
+        fs::remove_file(&log).ok();
+        renderer.render(&doc).unwrap();
+        assert!(fs::read_to_string(&log).unwrap().starts_with("platex "), "a trusted rc chooses platex");
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn the_real_cause_comes_first_in_a_failure_message() {
+        let tectonic = |first: &str| format!("{first}\nerror: something bad happened inside XeTeX; its output follows:\n(x.tex\nLaTeX2e <2021-11-15>\n");
+        let cases = [
+            (tectonic("error: undefined.tex:3: Undefined control sequence"), "undefined.tex:3: Undefined control sequence"),
+            (tectonic("error: nofile.tex:3: ! LaTeX Error: File `nope.tex' not found."), "nofile.tex:3: LaTeX Error: File `nope.tex' not found"),
+            (tectonic("error: math.tex:3: Missing $ inserted"), "math.tex:3: Missing $ inserted"),
+            (tectonic("error: !File ended while scanning use of \\textbf "), "File ended while scanning use of \\textbf"),
+            (tectonic("error: .washi-buf-paper.tex:3: Undefined control sequence"), "paper.tex:3: Undefined control sequence"),
+            ("./sections/intro.tex:12: Undefined control sequence.\nl.12 \\foo".to_string(), "intro.tex:12: Undefined control sequence"),
+            ("This is pdfTeX\n! Undefined control sequence.\nl.7 \\foo bar\n".to_string(), "line 7: Undefined control sequence"),
+            ("! Emergency stop.".to_string(), "Emergency stop"),
+        ];
+        for (output, want) in cases {
+            assert_eq!(first_error(&output).as_deref(), Some(want), "{output}");
+        }
+        assert_eq!(first_error("note: Running TeX ...\nWriting `x.pdf`"), None);
+        assert_eq!(first_error("error: something bad happened inside XeTeX; its output follows:"), None);
+    }
+
+    #[test]
+    #[ignore = "runs a real tectonic and needs the network on first use"]
+    fn real_tectonic_failures_start_with_the_cause() {
+        let dir = project("real-error");
+        let doc = dir.join("bad.tex");
+        fs::write(&doc, "\\documentclass{article}\n\\begin{document}\n\\undefinedmacro\n\\end{document}\n").unwrap();
+        let err = TexRenderer(SystemTexEngine).render(&doc).err().expect("fails");
+        assert_eq!(err.lines().next(), Some("bad.tex:3: Undefined control sequence"), "{err}");
+        let buffer = TexRenderer(SystemTexEngine).render_buffer(&doc, "\\documentclass{article}\n\\begin{document}\n\\undefinedmacro\n\\end{document}\n");
+        assert_eq!(buffer.output.err().unwrap().lines().next(), Some("bad.tex:3: Undefined control sequence"), "the hidden file's name is not shown");
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn latexmk_is_used_only_when_a_tex_engine_exists_too() {
+        let find = |present: &'static [&'static str]| move |name: &str| present.contains(&name).then(|| PathBuf::from(format!("/bin/{name}")));
+        assert!(latexmk_usable(&find(&["latexmk"])).is_none(), "latexmk without any engine cannot build");
+        assert!(latexmk_usable(&find(&["pdflatex"])).is_none(), "an engine without latexmk is not enough");
+        assert_eq!(latexmk_usable(&find(&["latexmk", "pdflatex"])), Some(PathBuf::from("/bin/latexmk")));
+        assert!(latexmk_usable(&find(&["latexmk", "uplatex"])).is_some(), "uplatex counts");
+        assert!(latexmk_usable(&find(&[])).is_none());
+    }
+
+    #[test]
+    #[ignore = "runs a real tectonic and needs the network on first use"]
+    fn real_tectonic_inverse_search_tolerates_clicks_just_below_the_baseline() {
+        let dir = project("real-inverse");
+        let doc = dir.join("single.tex");
+        fs::write(&doc, "\\documentclass{article}\n\\begin{document}\n\\section{One}\nSome text on line four.\n\\vspace{3cm}\nAnother paragraph on line seven.\n\\end{document}\n").unwrap();
+        let renderer = TexRenderer(SystemTexEngine);
+        renderer.render(&doc).unwrap();
+        let at = renderer.locate_forward(&doc, 4, 1).unwrap().expect("a position for line 4");
+        for dy in [-3.0, 0.0, 2.0, 5.0, 9.0] {
+            let hit = renderer.locate(&doc, at.page as usize, at.x + 3.0, at.y + dy).unwrap();
+            assert_eq!(hit.map(|h| h.line), Some(4), "dy {dy}");
+        }
+        assert!(renderer.locate(&doc, at.page as usize, at.x + 3.0, at.y + 45.0).unwrap().is_none(), "in the gap, far from both lines");
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn only_washis_own_temp_folders_of_dead_processes_are_swept() {
+        let temp = project("sweep-temp");
+        let old = SystemTime::now() - Duration::from_secs(3 * 60 * 60);
+        let make = |name: &str, age: Option<SystemTime>| {
+            let dir = temp.join(name);
+            fs::create_dir_all(dir.join("inner")).unwrap();
+            fs::write(dir.join("inner/x.pdf"), "x").unwrap();
+            if let Some(age) = age {
+                fs::File::open(&dir).unwrap().set_modified(age).unwrap();
+            }
+            dir
+        };
+        let dead_old = make("washi-4000001", Some(old));
+        let dead_paste = make("washi-paste-4000002", Some(old));
+        let dead_fresh = make("washi-4000003", None);
+        let alive_old = make("washi-4000004", Some(old));
+        let own_old = make("washi-4000005", Some(old));
+        let lookalike = make("washi-notes", Some(old));
+        let test_dir = make("washi-tex-buf-sibling-4000001", Some(old));
+        sweep_temp(&temp, 4000005, SystemTime::now(), &|pid| pid == 4000004);
+        assert!(!dead_old.exists() && !dead_paste.exists(), "dead and old: removed");
+        assert!(dead_fresh.exists(), "dead but recent: kept for an hour");
+        assert!(alive_old.exists(), "the process is still running: kept");
+        assert!(own_old.exists(), "never the current process's own folder");
+        assert!(lookalike.exists() && test_dir.exists(), "only washi-<pid> and washi-paste-<pid> are touched");
+        fs::remove_dir_all(temp).ok();
+    }
+
+    #[test]
+    fn the_process_id_is_read_from_the_folder_name() {
+        assert_eq!(temp_owner("washi-123"), Some(123));
+        assert_eq!(temp_owner("washi-paste-77"), Some(77));
+        for other in ["washi-", "washi-paste-", "washi-abc", "washi-12a", "washi-tex-buf-x-12", "other-12", "washi-1-2"] {
+            assert_eq!(temp_owner(other), None, "{other}");
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_finished_process_is_not_alive_and_this_one_is() {
+        let mut child = Command::new("true").spawn().unwrap();
+        let pid = child.id();
+        child.wait().unwrap();
+        assert!(!process_is_alive(pid));
+        assert!(process_is_alive(std::process::id()));
+    }
+
+    #[test]
+    fn the_apps_own_temp_folders_are_removed_on_exit() {
+        let pid = std::process::id();
+        let own = [format!("washi-{pid}"), format!("washi-paste-{pid}")].map(|n| std::env::temp_dir().join(n));
+        for dir in &own {
+            fs::create_dir_all(dir.join("abc")).unwrap();
+        }
+        cleanup_own_temp();
+        assert!(own.iter().all(|d| !d.exists()));
     }
 }

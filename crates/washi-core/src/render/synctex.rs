@@ -8,6 +8,7 @@ use std::{
 use flate2::read::GzDecoder;
 
 const SP_PER_BP: f64 = 65781.76;
+const NEAREST_MAX_BP: f64 = 20.0;
 
 #[derive(Debug, Clone)]
 struct Record {
@@ -37,6 +38,14 @@ impl Record {
 
     fn area(&self) -> i64 {
         self.w.saturating_mul(self.h + self.d)
+    }
+
+    fn distance(&self, x: i64, y: i64) -> i64 {
+        let (left, right) = (self.x, self.x + self.w.abs());
+        let (top, bottom) = (self.y - self.h.abs(), self.y + self.d.abs());
+        let horizontal = if x < left { left - x } else if x > right { x - right } else { 0 };
+        let vertical = if y < top { top - y } else if y > bottom { y - bottom } else { 0 };
+        horizontal + vertical
     }
 }
 
@@ -137,12 +146,23 @@ impl SyncTex {
         let records = self.pages.get(&page)?;
         let (x, y) = ((x_bp * SP_PER_BP) as i64, (y_bp * SP_PER_BP) as i64);
 
-        let container = records
+        let inside = records
             .iter()
             .enumerate()
             .filter(|(_, r)| r.is_hbox() && r.contains(x, y))
-            .min_by_key(|(_, r)| r.area())?
-            .0;
+            .min_by_key(|(_, r)| r.area());
+        let nearest = || {
+            let limit = (NEAREST_MAX_BP * SP_PER_BP) as i64;
+            records
+                .iter()
+                .enumerate()
+                .filter(|(_, r)| r.is_hbox() && r.w > 0)
+                .map(|(i, r)| (r.distance(x, y), r.area(), i))
+                .filter(|(distance, _, _)| *distance <= limit)
+                .min()
+                .map(|(_, _, i)| i)
+        };
+        let container = inside.map(|(i, _)| i).or_else(nearest)?;
 
         let descendants = records
             .iter()
@@ -225,6 +245,31 @@ mod tests {
         let s = SyncTex::parse(SAMPLE);
         assert_eq!(s.inverse(1, bp(7_000_000), bp(12_000_000)).unwrap().line, 31);
         assert_eq!(s.inverse(2, bp(8_000_000), bp(9_000_000)).unwrap().line, 41);
+    }
+
+    #[test]
+    fn a_click_just_outside_a_line_box_still_finds_the_nearest_line() {
+        let s = SyncTex::parse(SAMPLE);
+        let below_first = s.inverse(1, bp(9_000_000), bp(8_200_000 + 600_000)).unwrap();
+        assert_eq!(below_first.line, 10, "9 bp under the first line belongs to it");
+        let above_second = s.inverse(1, bp(6_000_000), bp(11_200_000 - 500_000)).unwrap();
+        assert_eq!(above_second.line, 31, "closer to the second line than to the first");
+        let left_of_first = s.inverse(1, bp(4_000_000), bp(7_900_000)).unwrap();
+        assert_eq!(left_of_first.line, 10, "to the left of the line, at its height");
+    }
+
+    #[test]
+    fn the_nearest_line_is_not_chosen_when_the_click_is_far_from_every_line() {
+        let s = SyncTex::parse(SAMPLE);
+        assert!(s.inverse(1, bp(9_000_000), bp(9_700_000)).is_none(), "midway between two lines, 23 bp from each");
+        assert!(s.inverse(1, bp(40_000_000), bp(8_000_000)).is_none(), "far into the right margin");
+    }
+
+    #[test]
+    fn a_click_inside_a_line_box_is_unchanged_by_the_nearest_rule() {
+        let s = SyncTex::parse(SAMPLE);
+        let hit = s.inverse(1, bp(20_000_000), bp(8_000_000)).unwrap();
+        assert_eq!(hit.line, 12);
     }
 
     #[test]

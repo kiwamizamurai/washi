@@ -41,6 +41,7 @@ impl Trust {
         Self { store }
     }
 
+    #[cfg(test)]
     pub fn at(store: PathBuf) -> Self {
         Self { store: Some(store) }
     }

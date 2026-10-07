@@ -70,6 +70,7 @@ Washi always opens a file for reading. Press `⌘E` to edit Markdown, Typst, LaT
 - **biblatex** needs `biber` and a `biblatex` of the same release. With `latexmk` and TeX Live they come together. With `tectonic` it does not work: tectonic bundles biblatex 3.17, which needs biber 2.17, and Homebrew's biber is newer. Use `\usepackage[backend=bibtex]{biblatex}` instead, which `tectonic` builds.
 - **pLaTeX / jsarticle** cannot be built by `tectonic`; use `latexmk` with a `.latexmkrc` (for example `$latex = 'platex'; $dvipdf = 'dvipdfmx %O -o %D %S'; $pdf_mode = 3;`). XeLaTeX with `xeCJK` works with either.
 - **Shell escape** (for example `minted`) is not enabled, because it lets a document run commands.
+- **Known limits**: `% !TEX program = xelatex` comments are not read (with `latexmk` your `.latexmkrc` chooses the engine). While you edit, `\jobname` is a hidden file name. Sources that are not UTF-8 (Shift_JIS, EUC-JP) can be built by `latexmk` with platex, but `tectonic` needs UTF-8 and Washi cannot edit them.
 
 ## For AI agents
 

@@ -6,6 +6,17 @@ The `washi` command-line interface (the `--json` output, exit codes, and the std
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-10-07
+
+### Fixed
+- **LaTeX builds failed whenever `latexmk` was installed.** Washi passed `-outdir DIR`, which `latexmk` rejects with "-outdir unknown option"; it only accepts `-outdir=DIR`. Builds now work with MacTeX and TeX Live, and `-file-line-error` is passed so errors name the file and line. This affected every version since 0.1.0 on machines with `latexmk`; machines with only `tectonic` were not affected.
+- Failure messages now start with the real cause, such as `bad.tex:3: Undefined control sequence`, instead of "tectonic failed:", so the status bar says what is wrong.
+- `latexmk` is used only when a TeX engine (pdflatex, xelatex, lualatex, platex or uplatex) is installed as well; otherwise Washi falls back to `tectonic`.
+- Included files are watched in more forms: `\input name` without braces, `\InputIfFileExists`, `\import`, `\subimport`, `\includefrom` and the related commands, `\inputminted`, `\includesvg`, `\addglobalbib`, `\addsectionbib`, and quoted names. Documents that are not UTF-8 (such as Shift_JIS) are scanned too.
+- Clicking just below or beside a line in a LaTeX PDF now finds the nearest line (within 20 pt), as the reference SyncTeX implementation does, instead of "no source found".
+- Washi removes its temporary build folders: stale ones from earlier runs at startup, and its own when it quits.
+- When `tectonic` runs out of time, the message says it downloads what it needs on first use, so trying again may help.
+
 ## [1.1.0] - 2026-10-07
 
 ### Added

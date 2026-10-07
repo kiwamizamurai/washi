@@ -84,10 +84,13 @@ pnpm dev
 
 ## LaTeX の注意
 
+- latexmk の引数は `-キー=値` の等号形だけ（`-outdir DIR` と空白で区切ると `unknown option` で何も実行されない）。公式の latexmk で確かめる: `WASHI_TEST_LATEXMK_PL=<latexmk.pl の場所> cargo test -p washi-core real_ -- --ignored --test-threads=1`（偽のエンジンで、Washi の実コードを通す）。
 - latexmk には `-pdf` を渡さない（`.latexmkrc` のエンジン指定を上書きするため）。`-e '$pdf_mode = 1 if !$pdf_mode;'` で、rc が決めていないときだけ PDF にする。
 - 文書のフォルダの `latexmkrc` / `.latexmkrc` は任意のコードを実行できるので、内容のハッシュで「信頼済み」を記録するまで使わない（`render/trust.rs`）。未信頼のときは `-norc` に、自分のホームの rc だけ `-r` で読み直す。確認は `.tex` を開いたときの `<dialog id="trust">`。
 - `% !TEX root = main.tex` は `tex.rs` の `magic_root` が読み、ルートをビルドする。章に未保存の変更があるあいだは、直前のビルドを見せる。
-- 失敗時の 1 行目の案内は `failure_hint`（shell-escape、pLaTeX、biber と biblatex の版の食い違い、biber が無い、`\documentclass` なし）。
+- 失敗メッセージの 1 行目は、既知の原因の案内（`failure_hint`）、なければ本当のエラー（`first_error`: tectonic の `error: file:line: msg`、`-file-line-error`、`! msg`）。案内の対象は `failure_hint`（shell-escape、pLaTeX、biber と biblatex の版の食い違い、biber が無い、`\documentclass` なし）。
+- 一時の出力フォルダ（`washi-<pid>`）は、起動時に持ち主のいない古いものを、終了時に自分のものを消す（`cleanup_temp` / `cleanup_own_temp`）。
+- `latexmk` を選ぶのは、エンジンもあるときだけ（`latexmk_usable`）。
 - 子プロセスには `tools::path_with_fallbacks()` を `PATH` として渡す（Finder / Dock から起動したアプリの `PATH` は最小で、`/opt/homebrew/bin` の biber や `/Library/TeX/texbin` の pdflatex が見えないため）。
 - biblatex は、tectonic（同梱の biblatex 3.17 は biber 2.17 を要求するが、Homebrew の biber は 2.22）では動かない。TeX Live の latexmk なら動く。`backend=bibtex` は tectonic で動く。
 
