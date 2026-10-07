@@ -58,9 +58,17 @@ Washi always opens a file for reading. Press `⌘E` to edit Markdown, Typst, LaT
 |---|---|---|
 | Markdown | HTML | GFM, footnotes, math (KaTeX), Mermaid, syntax highlighting, alerts, front matter, relative images and links |
 | Typst | PDF | Built-in compiler; `@preview` packages are fetched on first use; errors show line and column |
-| LaTeX | PDF | `latexmk`, or `tectonic` if missing; stops after 300 s (`WASHI_COMPILE_TIMEOUT` changes it) |
+| LaTeX | PDF | `latexmk`, or `tectonic` if missing; stops after 300 s (`WASHI_COMPILE_TIMEOUT` changes it). See [LaTeX notes](#latex-notes) |
 | Mermaid | SVG | `.mmd` / `.mermaid`; click a diagram to enlarge it |
 | PDF | PDF | Text selection, search, bookmarks |
+
+### LaTeX notes
+
+- **Engine**: with `latexmk`, the engine comes from your `.latexmkrc` (platex, xelatex, lualatex); without one it uses pdfLaTeX. Without `latexmk`, `tectonic` (XeTeX) is used.
+- **Several files**: put `% !TEX root = main.tex` on the first lines of a chapter, and Washi builds the main file when you open or edit the chapter. While the chapter has unsaved changes the preview keeps the last build, and it rebuilds when you save.
+- **biblatex** needs `biber`, which `tectonic` does not provide: install TeX Live or MacTeX (with `latexmk`).
+- **pLaTeX / jsarticle** cannot be built by `tectonic`; use `latexmk` with a `.latexmkrc` (for example `$latex = 'platex'; $dvipdf = 'dvipdfmx %O -o %D %S'; $pdf_mode = 3;`). XeLaTeX with `xeCJK` works with either.
+- **Shell escape** (for example `minted`) is not enabled, because it lets a document run commands.
 
 ## For AI agents
 

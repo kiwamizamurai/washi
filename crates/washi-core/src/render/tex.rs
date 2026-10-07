@@ -1,8 +1,13 @@
 use std::{
+    ffi::OsString,
     fs,
-    path::{Path, PathBuf},
+    io::Read,
+    path::{Component, Path, PathBuf},
     process::Command,
+    sync::LazyLock,
 };
+
+use regex::Regex;
 
 use super::{
     process::{self, Job, RunError},
@@ -13,6 +18,53 @@ use super::{
 
 const MIRROR_PREFIX: &str = ".washi-buf-";
 const STALE_MIRROR_AGE: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+const ROOT_SCAN_LINES: usize = 20;
+const ROOT_SCAN_BYTES: u64 = 4096;
+
+static ROOT_COMMENT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)^\s*%\s*!\s*tex\s+root\s*=\s*(.+?)\s*$").unwrap());
+static BIBLATEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\\(?:usepackage|RequirePackage)\s*(?:\[([^\]]*)\])?\s*\{[^}]*\bbiblatex\b[^}]*\}").unwrap()
+});
+static BIBTEX_BACKEND: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)backend\s*=\s*bibtex").unwrap());
+
+fn normalize(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    out.push("..");
+                }
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+fn magic_root(source: &Path, text: &str) -> Option<PathBuf> {
+    let named = text
+        .lines()
+        .take(ROOT_SCAN_LINES)
+        .find_map(|line| ROOT_COMMENT.captures(line).map(|c| c[1].trim_matches('"').to_owned()))?;
+    let mut root = source.parent().unwrap_or(Path::new(".")).join(named);
+    if root.extension().is_none() {
+        root.set_extension("tex");
+    }
+    let root = normalize(&root);
+    (root.is_file() && root != normalize(source)).then_some(root)
+}
+
+fn effective_source(path: &Path) -> PathBuf {
+    let mut head = Vec::new();
+    let read = fs::File::open(path).and_then(|f| f.take(ROOT_SCAN_BYTES).read_to_end(&mut head));
+    if read.is_err() {
+        return path.to_path_buf();
+    }
+    magic_root(path, &String::from_utf8_lossy(&head)).unwrap_or_else(|| path.to_path_buf())
+}
 
 pub trait TexEngine: Sync {
     fn compile(&self, source: &Path, out_dir: &Path, cwd: &Path) -> Result<(), String>;
@@ -30,18 +82,7 @@ impl<E: TexEngine> Renderer for TexRenderer<E> {
     }
 
     fn render(&self, path: &Path) -> Result<Output, String> {
-        let stem = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .ok_or("invalid file name")?;
-        let out_dir = out_dir_for(path);
-        fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
-
-        self.0.compile(path, &out_dir, path.parent().unwrap_or(Path::new(".")))?;
-
-        fs::read(out_dir.join(format!("{stem}.pdf")))
-            .map(Output::Pdf)
-            .map_err(|e| format!("cannot read the PDF: {e}"))
+        self.build(&effective_source(path))
     }
 
     fn render_text(&self, source: &str) -> Result<Output, String> {
@@ -53,35 +94,66 @@ impl<E: TexEngine> Renderer for TexRenderer<E> {
     }
 
     fn dependency_dirs(&self, path: &Path) -> Vec<PathBuf> {
-        super::deps::latex(path)
+        super::deps::latex(&effective_source(path))
     }
 
     fn render_buffer(&self, path: &Path, text: &str) -> Rendered {
-        Rendered { output: self.render_mirror(path, text), diagnostics: Vec::new() }
+        let output = match magic_root(path, text) {
+            Some(root) => self.render_through_root(path, &root, text),
+            None => self.render_mirror(path, text),
+        };
+        Rendered { output, diagnostics: Vec::new() }
     }
 
     fn buffer_dependency_dirs(&self, path: &Path, text: &str) -> Vec<PathBuf> {
-        super::deps::latex_text(path, Some(text))
+        match magic_root(path, text) {
+            Some(root) => super::deps::latex(&root),
+            None => super::deps::latex_text(path, Some(text)),
+        }
     }
 
     fn locate_forward(&self, path: &Path, line: u32, _column: u32) -> Result<Option<PreviewPosition>, String> {
-        let synctex = read_synctex(path)?;
+        let root = effective_source(path);
+        let synctex = read_synctex(&root)?;
         Ok(synctex
-            .forward(|input| same_file(path, input), line)
+            .forward(|input| same_file_from(&root, path, input), line)
             .map(|hit| PreviewPosition { page: hit.page, x: hit.x, y: hit.y }))
     }
 
     fn locate(&self, path: &Path, page: usize, x: f64, y: f64) -> Result<Option<SourceLocation>, String> {
-        let synctex = read_synctex(path)?;
+        let root = effective_source(path);
+        let synctex = read_synctex(&root)?;
         let Some(hit) = synctex.inverse(page as u32, x, y) else {
             return Ok(None);
         };
-        let file = resolve_input(path, &hit.input);
+        let file = resolve_input(&root, &hit.input);
         Ok(Some(SourceLocation { file, line: hit.line as usize, column: 1 }))
     }
 }
 
 impl<E: TexEngine> TexRenderer<E> {
+    fn build(&self, source: &Path) -> Result<Output, String> {
+        let stem = source.file_stem().and_then(|s| s.to_str()).ok_or("invalid file name")?;
+        let out_dir = out_dir_for(source);
+        fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
+
+        self.0.compile(source, &out_dir, source.parent().unwrap_or(Path::new(".")))?;
+
+        fs::read(out_dir.join(format!("{stem}.pdf")))
+            .map(Output::Pdf)
+            .map_err(|e| format!("cannot read the PDF: {e}"))
+    }
+    fn render_through_root(&self, path: &Path, root: &Path, text: &str) -> Result<Output, String> {
+        let unsaved = fs::read_to_string(path).map(|disk| disk != text).unwrap_or(true);
+        if unsaved {
+            let stem = root.file_stem().and_then(|s| s.to_str()).ok_or("invalid file name")?;
+            if let Ok(bytes) = fs::read(out_dir_for(root).join(format!("{stem}.pdf"))) {
+                return Ok(Output::Pdf(bytes));
+            }
+        }
+        self.build(root)
+    }
+
     fn render_mirror(&self, path: &Path, text: &str) -> Result<Output, String> {
         let parent = path.parent().unwrap_or(Path::new("."));
         let out_dir = out_dir_for(path);
@@ -161,11 +233,11 @@ fn read_synctex(path: &Path) -> Result<SyncTex, String> {
     SyncTex::read(&newest).map_err(|_| "no SyncTeX data; reload and try again".to_string())
 }
 
-fn same_file(source: &Path, input: &str) -> bool {
+fn same_file_from(base: &Path, target: &Path, input: &str) -> bool {
     fn clean(path: &Path) -> PathBuf {
         path.components().filter(|c| !matches!(c, std::path::Component::CurDir)).collect()
     }
-    clean(&resolve_input(source, input)) == clean(source)
+    clean(&resolve_input(base, input)) == clean(target)
 }
 
 fn out_dir_for(path: &Path) -> PathBuf {
@@ -192,6 +264,7 @@ pub struct SystemTexEngine;
 
 impl TexEngine for SystemTexEngine {
     fn compile(&self, source: &Path, out_dir: &Path, cwd: &Path) -> Result<(), String> {
+        let text = fs::read_to_string(source).unwrap_or_default();
         let (tool, mut command) = command_for(source, out_dir).ok_or(
             "neither latexmk nor tectonic was found; install one, for example with `brew install tectonic`",
         )?;
@@ -209,21 +282,68 @@ impl TexEngine for SystemTexEngine {
         if output.status.success() {
             return Ok(());
         }
-        Err(format!(
-            "{tool} failed:\n{}\n{}",
-            String::from_utf8_lossy(&output.stderr),
-            tail(&String::from_utf8_lossy(&output.stdout), 4000),
-        ))
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let details = format!("{tool} failed:\n{stderr}\n{}", tail(&stdout, 4000));
+        let hint = failure_hint(tool, &text, &format!("{stderr}\n{stdout}"), find_tool("biber").is_some());
+        Err(match hint {
+            Some(hint) => format!("{hint}\n\n{details}"),
+            None => details,
+        })
     }
+}
+
+fn uses_biber(text: &str) -> bool {
+    text.lines()
+        .filter(|line| !line.trim_start().starts_with('%'))
+        .any(|line| BIBLATEX.captures(line).is_some_and(|c| !c.get(1).is_some_and(|o| BIBTEX_BACKEND.is_match(o.as_str()))))
+}
+
+fn failure_hint(tool: &str, text: &str, output: &str, biber_found: bool) -> Option<String> {
+    let out = output.to_lowercase();
+    if out.contains("shell-escape") || out.contains("shell escape") {
+        return Some(
+            "This document needs shell escape (for example for minted). Washi does not enable it, because it lets a document run commands."
+                .into(),
+        );
+    }
+    if out.contains("platex2e") {
+        return Some(if tool == "tectonic" {
+            "This document needs pLaTeX or upLaTeX, which tectonic cannot build. Install TeX Live with latexmk and add a .latexmkrc that selects platex."
+        } else {
+            "latexmk built this with pdfLaTeX, but the document needs pLaTeX. Add a .latexmkrc such as: $latex = 'platex'; $dvipdf = 'dvipdfmx %O -o %D %S'; $pdf_mode = 3;"
+        }
+        .into());
+    }
+    let missing_file = out.contains("biber") || out.contains("no such file or directory") || out.contains(".bbl") || out.contains(".bcf");
+    if uses_biber(text) && !biber_found && missing_file {
+        return Some(
+            "This document uses biblatex, which needs biber, and biber was not found. Install TeX Live (or MacTeX) with latexmk; tectonic cannot run biber."
+                .into(),
+        );
+    }
+    if !text.contains("\\documentclass") && (out.contains("undefined control sequence") || out.contains("missing \\begin{document}")) {
+        return Some(
+            "This file has no \\documentclass, so it is probably a chapter. Add `% !TEX root = main.tex` on its first line to build the main file instead."
+                .into(),
+        );
+    }
+    None
+}
+fn latexmk_args(source: &Path, out_dir: &Path) -> Vec<OsString> {
+    let mut args: Vec<OsString> = ["-e", "$pdf_mode = 1 if !$pdf_mode;", "-synctex=1", "-interaction=nonstopmode", "-halt-on-error", "-outdir"]
+        .into_iter()
+        .map(OsString::from)
+        .collect();
+    args.push(out_dir.into());
+    args.push(source.into());
+    args
 }
 
 fn command_for(source: &Path, out_dir: &Path) -> Option<(&'static str, Command)> {
     if let Some(latexmk) = find_tool("latexmk") {
         let mut command = Command::new(latexmk);
-        command
-            .args(["-pdf", "-synctex=1", "-interaction=nonstopmode", "-halt-on-error", "-outdir"])
-            .arg(out_dir)
-            .arg(source);
+        command.args(latexmk_args(source, out_dir));
         return Some(("latexmk", command));
     }
     let tectonic: PathBuf = find_tool("tectonic")?;
@@ -412,9 +532,9 @@ mod tests {
         assert_eq!(resolve_input(real, "/proj/.washi-buf-paper.tex"), real);
         assert_eq!(resolve_input(real, ".washi-buf-paper.tex"), real);
         assert_eq!(resolve_input(real, "chapters/one.tex"), PathBuf::from("/proj/chapters/one.tex"));
-        assert!(same_file(real, "/proj/.washi-buf-paper.tex"));
-        assert!(same_file(real, "./paper.tex"));
-        assert!(!same_file(real, "chapters/paper.tex"));
+        assert!(same_file_from(real, real, "/proj/.washi-buf-paper.tex"));
+        assert!(same_file_from(real, real, "./paper.tex"));
+        assert!(!same_file_from(real, real, "chapters/paper.tex"));
     }
 
     #[test]
@@ -462,5 +582,139 @@ mod tests {
         fs::create_dir_all(dir.join("chapters")).unwrap();
         let renderer = TexRenderer(SpyEngine::default());
         assert_eq!(renderer.buffer_dependency_dirs(&dir.join("paper.tex"), "\\input{chapters/one}"), vec![dir.join("chapters")]);
+    }
+
+    fn multi_file_project(name: &str) -> (PathBuf, PathBuf, PathBuf) {
+        let dir = project(name);
+        fs::create_dir_all(dir.join("chapters")).unwrap();
+        let main = dir.join("main.tex");
+        let chapter = dir.join("chapters/one.tex");
+        fs::write(&main, "\\documentclass{article}\\begin{document}\\input{chapters/one}\\end{document}").unwrap();
+        fs::write(&chapter, "% !TEX root = ../main.tex\n\\section{One}").unwrap();
+        (dir, main, chapter)
+    }
+
+    #[test]
+    fn the_root_magic_comment_names_the_main_file() {
+        let (dir, main, chapter) = multi_file_project("root-comment");
+        assert_eq!(magic_root(&chapter, "% !TEX root = ../main.tex\n"), Some(main.clone()));
+        assert_eq!(magic_root(&chapter, "%!TeX root=../main\nbody"), Some(main.clone()), "no spaces, mixed case, no extension");
+        assert_eq!(magic_root(&chapter, "% !TEX root = \"../main.tex\""), Some(main.clone()), "quotes are ignored");
+        assert_eq!(magic_root(&chapter, "% !TEX root = ../gone.tex"), None, "a missing file is ignored");
+        assert_eq!(magic_root(&main, "% !TEX root = main.tex"), None, "a file is never its own root");
+        assert_eq!(magic_root(&chapter, "\\section{No comment}"), None);
+        let late = format!("{}% !TEX root = ../main.tex", "\n".repeat(25));
+        assert_eq!(magic_root(&chapter, &late), None, "only the first lines are read");
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn a_chapter_with_a_root_comment_is_built_through_the_main_file() {
+        let (dir, main, chapter) = multi_file_project("root-build");
+        let renderer = TexRenderer(SpyEngine::default());
+        match renderer.render(&chapter).unwrap() {
+            Output::Pdf(bytes) => assert_eq!(bytes, b"%PDF-spy"),
+            Output::Html(_) => panic!("expected a PDF"),
+        }
+        let calls = renderer.0.calls.lock().unwrap();
+        assert_eq!(calls[0].0, main, "the main file is compiled");
+        assert_eq!(calls[0].1, dir, "in the main file's folder");
+        drop(calls);
+        assert_eq!(renderer.dependency_dirs(&chapter), renderer.dependency_dirs(&main), "the main file's includes are watched");
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn an_unsaved_chapter_shows_the_last_build_instead_of_rebuilding_the_project() {
+        let (dir, main, chapter) = multi_file_project("root-buffer");
+        let disk = fs::read_to_string(&chapter).unwrap();
+        let renderer = TexRenderer(SpyEngine::default());
+        assert!(renderer.render_buffer(&chapter, &format!("{disk}\nedited")).output.is_ok(), "builds once when there is nothing to show");
+        assert_eq!(renderer.0.calls.lock().unwrap().len(), 1);
+        assert!(renderer.render_buffer(&chapter, &format!("{disk}\nedited more")).output.is_ok());
+        assert_eq!(renderer.0.calls.lock().unwrap().len(), 1, "unsaved text reuses the last build");
+        assert!(renderer.render_buffer(&chapter, &disk).output.is_ok());
+        let calls = renderer.0.calls.lock().unwrap();
+        assert_eq!(calls.len(), 2, "text equal to the disk (just saved) rebuilds");
+        assert!(calls.iter().all(|c| c.0 == main));
+        drop(calls);
+        assert_eq!(renderer.buffer_dependency_dirs(&chapter, &disk), renderer.dependency_dirs(&main));
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn synctex_inputs_of_a_chapter_resolve_against_the_main_files_folder() {
+        let root = Path::new("/proj/main.tex");
+        let chapter = Path::new("/proj/chapters/one.tex");
+        assert!(same_file_from(root, chapter, "chapters/one.tex"));
+        assert!(same_file_from(root, chapter, "./chapters/one.tex"));
+        assert!(!same_file_from(root, chapter, "one.tex"));
+    }
+
+    #[test]
+    fn latexmk_leaves_the_engine_to_the_rc_file() {
+        let args: Vec<String> = latexmk_args(Path::new("/d/a.tex"), Path::new("/o")).iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        assert!(!args.iter().any(|a| a == "-pdf"), "-pdf would override $pdf_mode from .latexmkrc: {args:?}");
+        let at = args.iter().position(|a| a == "-e").expect("an -e argument");
+        assert_eq!(args[at + 1], "$pdf_mode = 1 if !$pdf_mode;");
+        assert_eq!(args.last().unwrap(), "/d/a.tex");
+        assert!(args.windows(2).any(|w| w[0] == "-outdir" && w[1] == "/o"));
+    }
+
+    #[test]
+    fn biblatex_is_recognised_unless_it_uses_the_bibtex_backend() {
+        assert!(uses_biber("\\usepackage{biblatex}"));
+        assert!(uses_biber("\\usepackage[style=numeric,backend=biber]{biblatex}"));
+        assert!(uses_biber("\\RequirePackage[sorting=ynt]{biblatex}"));
+        assert!(!uses_biber("\\usepackage[backend=bibtex]{biblatex}"));
+        assert!(!uses_biber("% \\usepackage{biblatex}\n\\bibliography{refs}"));
+        assert!(!uses_biber("\\usepackage{natbib}"));
+    }
+
+    #[test]
+    fn failures_come_with_a_plain_first_line() {
+        let biblatex = "\\documentclass{article}\\usepackage{biblatex}";
+        let hint = failure_hint("tectonic", biblatex, "error: No such file or directory (os error 2)", false).unwrap();
+        assert!(hint.contains("biber was not found"), "{hint}");
+        assert!(failure_hint("tectonic", biblatex, "error: No such file or directory (os error 2)", true).is_none(), "biber is installed: no biber hint");
+        assert!(failure_hint("tectonic", "\\documentclass{article}", "error: No such file or directory", false).is_none(), "not a biblatex document");
+
+        let minted = failure_hint("tectonic", "", "Package minted Error: You must invoke LaTeX with the -shell-escape flag.", true).unwrap();
+        assert!(minted.contains("shell escape"), "{minted}");
+
+        let platex = "LaTeX Error: This file needs format `pLaTeX2e' but this is `pdfLaTeX'.";
+        assert!(failure_hint("tectonic", "", platex, true).unwrap().contains("tectonic cannot build"));
+        assert!(failure_hint("latexmk", "", platex, true).unwrap().contains(".latexmkrc"));
+
+        let chapter = failure_hint("tectonic", "\\section{One}", "! Undefined control sequence.", true).unwrap();
+        assert!(chapter.contains("% !TEX root"), "{chapter}");
+        assert!(failure_hint("tectonic", "\\documentclass{article}", "! Undefined control sequence.", true).is_none(), "a real document with a typo gets no hint");
+    }
+
+    #[test]
+    #[ignore = "runs a real tectonic and needs the network on first use"]
+    fn real_tectonic_builds_a_chapter_through_its_root() {
+        let (dir, _main, chapter) = multi_file_project("real-root");
+        let renderer = TexRenderer(SystemTexEngine);
+        match renderer.render(&chapter).unwrap() {
+            Output::Pdf(bytes) => assert!(bytes.starts_with(b"%PDF"), "not a PDF"),
+            Output::Html(_) => panic!("expected a PDF"),
+        }
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    #[ignore = "runs a real tectonic and needs the network on first use"]
+    fn real_tectonic_explains_why_biblatex_failed() {
+        if find_tool("biber").is_some() {
+            return;
+        }
+        let dir = project("real-biber");
+        let doc = dir.join("paper.tex");
+        fs::write(&doc, "\\documentclass{article}\\usepackage[backend=biber]{biblatex}\\addbibresource{r.bib}\\begin{document}\\cite{k}\\printbibliography\\end{document}").unwrap();
+        fs::write(dir.join("r.bib"), "@book{k,author={A},title={T},year={2000},publisher={P}}").unwrap();
+        let err = TexRenderer(SystemTexEngine).render(&doc).err().expect("biblatex fails without biber");
+        assert!(err.lines().next().unwrap().contains("biber was not found"), "{err}");
+        fs::remove_dir_all(dir).ok();
     }
 }
