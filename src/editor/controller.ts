@@ -372,9 +372,11 @@ export class EditingController {
     if (!this.session) return;
     const left = document.createElement("span");
     left.className = "left";
-    const saved = document.createElement("span");
-    saved.className = this.session.dirty ? "unsaved" : "saved";
-    saved.textContent = this.session.dirty ? `${DIRTY_MARK}Unsaved` : "Saved";
+    const dirty = this.session.dirty;
+    const saved = dirty ? button(`${DIRTY_MARK}Unsaved`, () => void this.save()) : document.createElement("span");
+    saved.className = dirty ? "unsaved" : "saved";
+    if (dirty) saved.title = "Save (⌘S)";
+    else saved.textContent = "Saved";
     const { line, column, selected } = this.lastPosition;
     const where = document.createElement("span");
     where.textContent = `${line}:${column}`;
