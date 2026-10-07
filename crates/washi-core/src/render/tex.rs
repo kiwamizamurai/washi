@@ -13,7 +13,7 @@ use serde::Serialize;
 use super::{
     process::{self, Job, RunError},
     synctex::SyncTex,
-    tools::find_tool,
+    tools::{find_tool, path_with_fallbacks},
     trust::{self, Trust},
     Output, PreviewPosition, Rendered, Renderer, SourceLocation,
 };
@@ -28,6 +28,8 @@ static ROOT_COMMENT: LazyLock<Regex> =
 static BIBLATEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\\(?:usepackage|RequirePackage)\s*(?:\[([^\]]*)\])?\s*\{[^}]*\bbiblatex\b[^}]*\}").unwrap()
 });
+static BIBER_MISMATCH: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"biber \(([0-9.]+)\) and biblatex \(([0-9.]+)\) versions are incompatible").unwrap());
 static BIBTEX_BACKEND: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)backend\s*=\s*bibtex").unwrap());
 
 fn normalize(path: &Path) -> PathBuf {
@@ -349,10 +351,17 @@ fn failure_hint(tool: &str, text: &str, output: &str, biber_found: bool, rc_igno
         }
         .into());
     }
+    if out.contains("versions are incompatible") || out.contains("biblatex control file version") {
+        let versions = BIBER_MISMATCH.captures(&out).map(|c| format!("biber {} and biblatex {}", &c[1], &c[2]));
+        return Some(format!(
+            "{} do not match. tectonic bundles an older biblatex, so install TeX Live (it includes latexmk and a matching biber), or use backend=bibtex.",
+            versions.unwrap_or_else(|| "biber and biblatex".into()),
+        ));
+    }
     let missing_file = out.contains("biber") || out.contains("no such file or directory") || out.contains(".bbl") || out.contains(".bcf");
     if uses_biber(text) && !biber_found && missing_file {
         return Some(
-            "This document uses biblatex, which needs biber, and biber was not found. Install TeX Live (or MacTeX) with latexmk; tectonic cannot run biber."
+            "This document uses biblatex, which needs biber, and biber was not found. Install TeX Live (it includes biber and latexmk)."
                 .into(),
         );
     }
@@ -387,7 +396,7 @@ fn command_for(source: &Path, out_dir: &Path, untrusted_rc: bool) -> Option<(&'s
     if let Some(latexmk) = find_tool("latexmk") {
         let mut command = Command::new(latexmk);
         let isolation = untrusted_rc.then(trust::user_rc);
-        command.args(latexmk_args(source, out_dir, isolation));
+        command.args(latexmk_args(source, out_dir, isolation)).env("PATH", path_with_fallbacks());
         return Some(("latexmk", command));
     }
     let tectonic: PathBuf = find_tool("tectonic")?;
@@ -395,7 +404,8 @@ fn command_for(source: &Path, out_dir: &Path, untrusted_rc: bool) -> Option<(&'s
     command
         .args(["-X", "compile", "--synctex", "--outdir"])
         .arg(out_dir)
-        .arg(source);
+        .arg(source)
+        .env("PATH", path_with_fallbacks());
     Some(("tectonic", command))
 }
 
@@ -808,5 +818,59 @@ mod tests {
         let ignored = failure_hint("latexmk", "", platex, true, true).unwrap();
         assert!(ignored.contains("did not use") && ignored.contains("allowed"), "{ignored}");
         assert!(failure_hint("latexmk", "", platex, true, false).unwrap().contains("Add a .latexmkrc"));
+    }
+
+    const REAL_MISMATCH: &str = "error: the external tool exited with an error code; its stdout was:\nINFO - This is Biber 2.22\nERROR - Error: Found biblatex control file version 3.8, expected version 3.11.\nThis means that your biber (2.22) and biblatex (3.17) versions are incompatible.\nSee compat matrix in biblatex or biber PDF documentation.";
+
+    #[test]
+    fn a_biber_and_biblatex_mismatch_is_named_with_both_versions() {
+        let biblatex = "\\documentclass{article}\\usepackage{biblatex}";
+        let hint = failure_hint("tectonic", biblatex, REAL_MISMATCH, true, false).unwrap();
+        assert!(hint.starts_with("biber 2.22 and biblatex 3.17 do not match"), "{hint}");
+        assert!(hint.contains("TeX Live") && hint.contains("backend=bibtex"), "{hint}");
+        assert!(failure_hint("tectonic", biblatex, REAL_MISMATCH, false, false).unwrap().contains("do not match"), "a mismatch is reported even when biber is not found by Washi");
+
+        let vague = failure_hint("tectonic", biblatex, "Found biblatex control file version 3.8", true, false).unwrap();
+        assert!(vague.starts_with("biber and biblatex do not match"), "{vague}");
+    }
+
+    #[test]
+    fn the_missing_biber_hint_points_to_tex_live() {
+        let hint = failure_hint("tectonic", "\\usepackage{biblatex}", "error: No such file or directory (os error 2)", false, false).unwrap();
+        assert!(hint.contains("TeX Live") && !hint.contains("tectonic cannot"), "{hint}");
+    }
+
+    struct MinimalPath(Option<std::ffi::OsString>);
+
+    impl MinimalPath {
+        fn set() -> Self {
+            let saved = std::env::var_os("PATH");
+            std::env::set_var("PATH", "/usr/bin:/bin:/usr/sbin:/sbin");
+            Self(saved)
+        }
+    }
+
+    impl Drop for MinimalPath {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(path) => std::env::set_var("PATH", path),
+                None => std::env::remove_var("PATH"),
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "runs a real tectonic with an installed biber, with PATH changed; run with --test-threads=1"]
+    fn real_tectonic_still_reaches_biber_when_the_app_was_started_with_a_minimal_path() {
+        let Some(_) = find_tool("biber") else { return };
+        let dir = project("real-minimal-path");
+        let doc = dir.join("paper.tex");
+        fs::write(&doc, "\\documentclass{article}\\usepackage{biblatex}\\addbibresource{r.bib}\\begin{document}\\cite{k}\\printbibliography\\end{document}").unwrap();
+        fs::write(dir.join("r.bib"), "@book{k,author={A},title={T},year={2000},publisher={P}}").unwrap();
+        let _minimal = MinimalPath::set();
+        let err = TexRenderer(SystemTexEngine).render(&doc).err().expect("biber and biblatex do not match");
+        let first = err.lines().next().unwrap();
+        assert!(first.contains("do not match"), "biber was not reached: {err}");
+        fs::remove_dir_all(dir).ok();
     }
 }

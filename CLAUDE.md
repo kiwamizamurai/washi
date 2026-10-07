@@ -87,7 +87,9 @@ pnpm dev
 - latexmk には `-pdf` を渡さない（`.latexmkrc` のエンジン指定を上書きするため）。`-e '$pdf_mode = 1 if !$pdf_mode;'` で、rc が決めていないときだけ PDF にする。
 - 文書のフォルダの `latexmkrc` / `.latexmkrc` は任意のコードを実行できるので、内容のハッシュで「信頼済み」を記録するまで使わない（`render/trust.rs`）。未信頼のときは `-norc` に、自分のホームの rc だけ `-r` で読み直す。確認は `.tex` を開いたときの `<dialog id="trust">`。
 - `% !TEX root = main.tex` は `tex.rs` の `magic_root` が読み、ルートをビルドする。章に未保存の変更があるあいだは、直前のビルドを見せる。
-- 失敗時の 1 行目の案内は `failure_hint`（biber、shell-escape、pLaTeX、`\documentclass` なし）。
+- 失敗時の 1 行目の案内は `failure_hint`（shell-escape、pLaTeX、biber と biblatex の版の食い違い、biber が無い、`\documentclass` なし）。
+- 子プロセスには `tools::path_with_fallbacks()` を `PATH` として渡す（Finder / Dock から起動したアプリの `PATH` は最小で、`/opt/homebrew/bin` の biber や `/Library/TeX/texbin` の pdflatex が見えないため）。
+- biblatex は、tectonic（同梱の biblatex 3.17 は biber 2.17 を要求するが、Homebrew の biber は 2.22）では動かない。TeX Live の latexmk なら動く。`backend=bibtex` は tectonic で動く。
 
 ## CI とリリース
 
