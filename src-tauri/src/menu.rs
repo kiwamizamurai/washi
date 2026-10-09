@@ -1,13 +1,18 @@
+use std::sync::Mutex;
+
 use tauri::{
     image::Image,
-    menu::{AboutMetadata, Menu, MenuItem, MenuItemBuilder, SubmenuBuilder},
-    AppHandle, Emitter, Manager, Wry,
+    menu::{
+        AboutMetadata, Menu, MenuItem, MenuItemBuilder, PredefinedMenuItem, Submenu, SubmenuBuilder,
+    },
+    AppHandle, Emitter, Manager, State, Wry,
 };
 
 pub const MENU_EVENT: &str = "washi://menu";
 
 pub mod id {
     pub const OPEN: &str = "open";
+    pub const RECENT_CLEAR: &str = "recent-clear";
     pub const RELOAD: &str = "reload";
     pub const PRINT: &str = "print";
     pub const PASTE: &str = "paste";
@@ -48,6 +53,55 @@ fn about_metadata() -> AboutMetadata<'static> {
     }
 }
 
+/// Handle to the "Open Recent" submenu so the frontend can rebuild it
+/// whenever the recent-files list changes.
+#[derive(Default)]
+pub struct RecentMenu(Mutex<Option<Submenu<Wry>>>);
+
+/// Rebuild the "Open Recent" submenu from `paths` (newest first). Runs on the
+/// main thread: `set_recent_files` hops over from the webview thread.
+fn rebuild_recent(
+    app: &AppHandle,
+    submenu: &Submenu<Wry>,
+    paths: &[String],
+) -> tauri::Result<()> {
+    for kind in submenu.items()? {
+        submenu.remove(&kind)?;
+    }
+
+    if paths.is_empty() {
+        let empty = MenuItemBuilder::with_id("recent-empty", "No Recent Files")
+            .enabled(false)
+            .build(app)?;
+        submenu.append(&empty)?;
+    } else {
+        for (i, path) in paths.iter().enumerate() {
+            let item = MenuItem::with_id(app, format!("recent:{i}"), path, true, None::<&str>)?;
+            submenu.append(&item)?;
+        }
+    }
+
+    submenu.append(&PredefinedMenuItem::separator(app)?)?;
+    submenu.append(&item(app, id::RECENT_CLEAR, "Clear Menu", None)?)?;
+    Ok(())
+}
+
+/// Called from the frontend after the recent-files list changes.
+pub fn set_recent_files(
+    app: &AppHandle,
+    recent: State<'_, RecentMenu>,
+    paths: Vec<String>,
+) -> Result<(), String> {
+    let app = app.clone();
+    let submenu = recent.0.lock().unwrap().clone();
+    app.clone().run_on_main_thread(move || {
+        if let Some(submenu) = submenu.as_ref() {
+            let _ = rebuild_recent(&app, submenu, &paths);
+        }
+    })
+    .map_err(|e| e.to_string())
+}
+
 pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let menu = Menu::new(app)?;
 
@@ -67,9 +121,18 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         menu.append(&application)?;
     }
 
+    let recent_files = SubmenuBuilder::new(app, "Open Recent").build()?;
+    {
+        let recent_state = app.state::<RecentMenu>();
+        let mut guard = recent_state.0.lock().unwrap();
+        *guard = Some(recent_files.clone());
+    }
+    rebuild_recent(app, &recent_files, &[])?;
+
     let file = SubmenuBuilder::new(app, "File")
         .item(&item(app, id::OPEN, "Open…", Some("CmdOrCtrl+O"))?)
         .item(&item(app, id::RELOAD, "Reload", Some("CmdOrCtrl+R"))?)
+        .item(&recent_files)
         .separator()
         .item(&item(app, id::SAVE, "Save", Some("CmdOrCtrl+S"))?)
         .item(&item(app, id::AUTOSAVE, "Toggle Autosave", None)?)
@@ -151,9 +214,9 @@ mod tests {
     #[test]
     fn ids_are_unique() {
         let all = [
-            OPEN, RELOAD, PRINT, PASTE, FIND, OUTLINE, THEME_SYSTEM, THEME_LIGHT, THEME_DARK,
-            WIDTH_NARROW, WIDTH_WIDE, WIDTH_FULL, ZOOM_IN, ZOOM_OUT, ZOOM_RESET, SAVE, EDIT, UNDO, REDO,
-            AUTOSAVE, SYNC_CURSOR, PALETTE,
+            OPEN, RECENT_CLEAR, RELOAD, PRINT, PASTE, FIND, OUTLINE, THEME_SYSTEM, THEME_LIGHT,
+            THEME_DARK, WIDTH_NARROW, WIDTH_WIDE, WIDTH_FULL, ZOOM_IN, ZOOM_OUT, ZOOM_RESET, SAVE,
+            EDIT, UNDO, REDO, AUTOSAVE, SYNC_CURSOR, PALETTE,
         ];
         let mut sorted = all.to_vec();
         sorted.sort_unstable();
