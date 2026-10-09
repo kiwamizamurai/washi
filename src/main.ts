@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -58,6 +59,11 @@ function debounce(fn: () => void, ms: number) {
 }
 
 const recentChanged = { current: () => {} };
+
+// Keep the native "Open Recent" submenu in sync with the localStorage list.
+const syncRecentMenu = () => {
+  void invoke("set_recent_files", { paths: loadRecent() }).catch(() => {});
+};
 const rcTrusted = { current: () => {} };
 const declinedRc = new Set<string>();
 
@@ -90,6 +96,7 @@ const host: Host = {
     } catch (e) {
       removeRecent(path);
       recentChanged.current();
+      syncRecentMenu();
       throw e;
     }
   },
@@ -98,6 +105,7 @@ const host: Host = {
   async opened(path) {
     addRecent(path);
     recentChanged.current();
+    syncRecentMenu();
     await getCurrentWindow().setTitle(`${basename(path)} — Washi`);
     await watch(path);
     void askAboutLatexmkrc(path);
@@ -155,8 +163,10 @@ async function main() {
   byId("clear-recent").addEventListener("click", () => {
     clearRecent();
     showRecent();
+    syncRecentMenu();
   });
   showRecent();
+  syncRecentMenu();
 
   const finder = new FindBar(byId("find") as HTMLFormElement, domSearchSource(byId("scroller")));
   new ReadingProgress(byId("progress").firstElementChild as HTMLElement, byId("scroller"), [
@@ -189,6 +199,12 @@ async function main() {
   const open_ = async (path: string) => {
     if (await editing.release()) await viewer.load(path);
   };
+
+  const openRecentAt = (index: number) => {
+    const path = loadRecent()[index];
+    if (path) void open_(path);
+  };
+
 
   const reloadSoon = debounce(() => void viewer.reload(), RELOAD_DELAY_MS);
   const relayoutSoon = debounce(() => void viewer.relayout(), RELOAD_DELAY_MS);
@@ -275,6 +291,11 @@ async function main() {
     toggleAutosave: () => editing.toggleAutosave(),
     toggleSyncCursor: () => editing.toggleSyncCursor(),
     openPalette: () => palette.open(),
+    clearRecent: () => {
+      clearRecent();
+      showRecent();
+      syncRecentMenu();
+    },
   });
 
   const openPending = async () => {
@@ -328,7 +349,14 @@ async function main() {
     if (target && isSupported(target)) void open_(target);
   });
 
-  await listen<string>(MENU_EVENT, (e) => void actions[e.payload]?.());
+  await listen<string>(MENU_EVENT, (e) => {
+    const id = e.payload;
+    if (id.startsWith("recent:")) {
+      openRecentAt(Number(id.slice("recent:".length)));
+      return;
+    }
+    void actions[id]?.();
+  });
   await listen(CHANGED_EVENT, async () => {
     if (!(await editing.diskChanged())) reloadSoon();
   });

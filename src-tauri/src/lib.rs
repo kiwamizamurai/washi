@@ -23,12 +23,14 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
+        .manage(menu::RecentMenu::default())
         .manage(PendingFiles::default())
         .manage(Documents::default())
         .manage(DirtyWindows::default())
         .manage(FileWatcher::default())
         .invoke_handler(tauri::generate_handler![
             commands::supported_extensions,
+            commands::set_recent_files,
             commands::initial_file,
             commands::jump_to_source,
             commands::print,

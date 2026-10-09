@@ -9,6 +9,7 @@ use washi_core::{
 };
 
 use crate::{
+    menu::RecentMenu,
     state::{DirtyWindows, Documents, PendingFiles},
     watch::FileWatcher,
 };
@@ -181,4 +182,15 @@ pub fn watch(
 ) -> Result<(), String> {
     documents.open(window.label(), &path);
     watcher.watch(app, window.label(), &PathBuf::from(path))
+}
+
+/// Push the current recent-files list (newest first) into the native
+/// "Open Recent" menu. The frontend calls this after every list change.
+#[tauri::command]
+pub fn set_recent_files(
+    app: AppHandle,
+    recent: State<'_, RecentMenu>,
+    paths: Vec<String>,
+) -> Result<(), String> {
+    crate::menu::set_recent_files(&app, recent, paths)
 }

@@ -18,6 +18,7 @@ export interface Controls {
   toggleAutosave(): unknown;
   toggleSyncCursor(): unknown;
   openPalette(): unknown;
+  clearRecent(): unknown;
 }
 
 export function menuActions(c: Controls): Record<string, () => unknown> {
@@ -44,5 +45,6 @@ export function menuActions(c: Controls): Record<string, () => unknown> {
     autosave: () => c.toggleAutosave(),
     "sync-cursor": () => c.toggleSyncCursor(),
     palette: () => c.openPalette(),
+    "recent-clear": () => c.clearRecent(),
   };
 }
