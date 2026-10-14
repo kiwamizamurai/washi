@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Washi</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+
+  <body>
+    <aside id="files" aria-label="Files" hidden>
+      <header>
+        <span class="title">Files</span>
+        <button class="refresh" type="button" aria-label="Refresh the list" title="Refresh">↻</button>
+      </header>
+      <div class="tree" role="tree" aria-label="Documents in this folder"></div>
+      <p class="note" hidden></p>
+    </aside>
+    <aside id="outline" aria-label="Outline" hidden><nav></nav></aside>
+    <section id="editor-pane" aria-label="Editor" hidden>
+      <div id="banner" role="alert" hidden></div>
+      <div id="editor"></div>
+      <footer id="editor-status"></footer>
+    </section>
+    <div id="resizer" role="separator" aria-orientation="vertical" aria-label="Editor width" tabindex="0" hidden></div>
+    <div id="scroller">
+      <div id="progress" aria-hidden="true"><i></i></div>
+      <section id="empty">
+        <h1>Washi <span>和紙</span></h1>
+        <p>Drop a Markdown, Typst, LaTeX or Mermaid file here</p>
+        <p>or copy some text and paste it with <kbd>⌘V</kbd></p>
+        <button id="open" type="button">Open a file <kbd>⌘O</kbd></button>
+        <section id="recent" aria-label="Recent files" hidden>
+          <h2>Recent</h2>
+          <ul></ul>
+          <button id="clear-recent" type="button">Clear recent files</button>
+        </section>
+      </section>
+      <article id="markdown" class="markdown" dir="auto" hidden></article>
+    </div>
+    <form id="find" hidden>
+      <input type="search" placeholder="Find" aria-label="Find" />
+      <span class="count" role="status" aria-live="polite"></span>
+      <button type="button" data-find="prev" aria-label="Previous">↑</button>
+      <button type="button" data-find="next" aria-label="Next">↓</button>
+      <button type="button" data-find="close" aria-label="Close">×</button>
+    </form>
+    <aside id="update" aria-label="Update available" aria-live="polite" hidden>
+      <button class="close" type="button" data-update="close" aria-label="Close">×</button>
+      <p class="title"></p>
+      <p class="detail"></p>
+      <div class="command"><code></code><button type="button" data-update="copy">Copy</button></div>
+      <div class="actions">
+        <button type="button" data-update="notes">Release Notes</button>
+      </div>
+    </aside>
+    <div id="toast" role="status" hidden></div>
+    <div id="busy" role="status" aria-live="polite" hidden></div>
+    <pre id="error" hidden></pre>
+    <dialog id="palette" aria-label="Command palette">
+      <input type="text" role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list" placeholder="Type a command, a file, or #heading" autocomplete="off" spellcheck="false" />
+      <ul id="palette-list" role="listbox"></ul>
+    </dialog>
+    <dialog id="confirm">
+      <form method="dialog">
+        <p></p>
+        <div class="actions">
+          <button value="cancel">Cancel</button>
+          <button value="discard">Don't save</button>
+          <button value="save" autofocus>Save</button>
+        </div>
+      </form>
+    </dialog>
+  </body>
+</html>

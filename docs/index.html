@@ -1,0 +1,1364 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Washi: a viewer for Markdown, Typst and LaTeX</title>
+    <meta name="description" content="A small macOS app for reading Markdown, Typst, LaTeX and Mermaid. It redraws when the file changes, and you can edit with a live preview." />
+    <meta name="theme-color" content="#fbf9f4" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#1a1917" media="(prefers-color-scheme: dark)" />
+    <meta property="og:title" content="Washi (和紙)" />
+    <meta property="og:description" content="A macOS app for reading Markdown, Typst, LaTeX and Mermaid." />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="assets/shot-markdown-light.jpg" />
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="alternate" hreflang="ja" href="ja/" />
+    <link rel="alternate" hreflang="en" href="./" />
+    <link rel="alternate" hreflang="x-default" href="./" />
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #fbf9f4;
+        --fg: #2b2a27;
+        --muted: #6f6b61;
+        --line: #e3dfd3;
+        --accent: #b5483a;
+        --code: #f1eee5;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #1a1917;
+          --fg: #ebe7dc;
+          --muted: #a39e90;
+          --line: #36342f;
+          --accent: #e0745f;
+          --code: #232220;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font: 16px/1.8 -apple-system, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", system-ui, sans-serif;
+      }
+      main,
+      header,
+      footer {
+        width: min(44rem, 100% - 2.5rem);
+        margin-inline: auto;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 1.25rem;
+        padding: 1.25rem 0;
+      }
+      header a:first-child {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        margin-right: auto;
+        font-weight: 700;
+        text-decoration: none;
+      }
+      header img {
+        width: 28px;
+        height: 28px;
+      }
+      a {
+        color: var(--accent);
+      }
+      h1 {
+        margin: 2.5rem 0 0.5rem;
+        font-size: 2.4rem;
+        line-height: 1.2;
+      }
+      h2 {
+        margin: 3.2rem 0 0.8rem;
+        font-size: 1.3rem;
+      }
+      p,
+      ul {
+        margin: 0.8rem 0;
+      }
+      li {
+        margin: 0.35rem 0;
+      }
+      img {
+        display: block;
+        max-width: 100%;
+        height: auto;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+      figure {
+        margin: 1.5rem 0;
+      }
+      figcaption {
+        margin-top: 0.4rem;
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+      code,
+      pre,
+      kbd {
+        font: 0.9em ui-monospace, "SF Mono", Menlo, monospace;
+      }
+      code,
+      kbd {
+        padding: 0.1em 0.4em;
+        border-radius: 4px;
+        background: var(--code);
+      }
+      pre {
+        margin: 1rem 0;
+        padding: 0.9rem 1rem;
+        overflow-x: auto;
+        border-radius: 8px;
+        background: var(--code);
+      }
+      pre code {
+        padding: 0;
+        background: none;
+      }
+      .table {
+        overflow-x: auto;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.82rem;
+        line-height: 1.5;
+      }
+      th,
+      td {
+        padding: 0.45rem 0.4rem;
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+      }
+      th:first-child {
+        font-weight: 500;
+      }
+      thead th {
+        color: var(--muted);
+        font-weight: 500;
+      }
+      td:nth-child(2),
+      th:nth-child(2) {
+        font-weight: 700;
+      }
+      table th:first-child {
+        position: sticky;
+        left: 0;
+        min-width: 9rem;
+        background: var(--bg);
+      }
+      table td {
+        min-width: 7.5rem;
+      }
+      table td code {
+        white-space: nowrap;
+      }
+      footer {
+        margin-top: 4rem;
+        padding: 1.5rem 0 3rem;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+    
+
+      .tour {
+        --paper: var(--bg);
+        --paper-2: var(--code);
+        --ink: var(--fg);
+        --rule: var(--line);
+        --accent-ink: var(--bg);
+        --ok: #3f7d4e;
+        --shadow: 0 6px 24px -10px rgb(0 0 0 / 0.3);
+        --serif: "Hiragino Mincho ProN", "Yu Mincho", Georgia, serif;
+        --sans: -apple-system, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", system-ui, sans-serif;
+        --mono: ui-monospace, "SF Mono", Menlo, monospace;
+        display: grid;
+        gap: 1.25rem;
+        margin: 1.2rem 0 0;
+      }
+      .window {
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--bg);
+      }
+      .window .bar {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        height: 34px;
+        padding: 0 12px;
+        border-bottom: 1px solid var(--line);
+        background: var(--code);
+      }
+      .window .bar i {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--line);
+      }
+      .window .bar span {
+        margin-left: 0.6rem;
+        color: var(--muted);
+        font: 0.78rem ui-monospace, "SF Mono", Menlo, monospace;
+      }
+      .tour .stage {
+        order: -1;
+        position: static;
+      }
+      .tour .steps {
+        display: grid;
+        gap: 4px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        counter-reset: step;
+      }
+      .tour .step {
+        position: relative;
+        display: block;
+        width: 100%;
+        padding: 16px 18px 16px 54px;
+        overflow: hidden;
+        border: 1px solid transparent;
+        border-radius: 14px;
+        background: none;
+        color: var(--muted);
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+        transition: background 0.35s, border-color 0.35s, color 0.35s;
+      }
+      .tour .step::before {
+        counter-increment: step;
+        content: counter(step);
+        position: absolute;
+        left: 16px;
+        top: 16px;
+        display: grid;
+        place-items: center;
+        width: 26px;
+        height: 26px;
+        border: 1px solid var(--rule);
+        border-radius: 50%;
+        font: 500 0.78rem/1 var(--mono);
+        transition: all 0.35s;
+      }
+      .tour .step b {
+        display: block;
+        color: var(--ink);
+        font: 700 1.08rem/1.45 var(--serif);
+        letter-spacing: 0.02em;
+      }
+      .tour .step span {
+        display: block;
+        max-height: 0;
+        margin-top: 0;
+        overflow: hidden;
+        font-size: 0.92rem;
+        line-height: 1.7;
+        opacity: 0;
+        transition: max-height 0.5s ease, opacity 0.4s ease, margin 0.4s ease;
+      }
+      .tour .step:hover {
+        border-color: var(--rule);
+      }
+      .tour .step.on {
+        border-color: var(--rule);
+        background: var(--paper-2);
+      }
+      .tour .step.on::before {
+        border-color: var(--accent);
+        background: var(--accent);
+        color: var(--accent-ink);
+      }
+      .tour .step.on span {
+        max-height: 8em;
+        margin-top: 0.35rem;
+        opacity: 1;
+      }
+      .tour .step .fill {
+        position: absolute;
+        left: 0;
+        bottom: 0;
+        width: 100%;
+        height: 2px;
+        background: var(--accent);
+        opacity: 0.85;
+        transform: scaleX(0);
+        transform-origin: left;
+      }
+      .tour .stage {
+        position: sticky;
+        top: 88px;
+        will-change: auto;
+        transform-style: flat;
+      }
+      .tour .screen {
+        position: relative;
+        aspect-ratio: 16 / 10;
+        overflow: hidden;
+        background: var(--paper);
+        color: var(--ink);
+        font: 400 clamp(9.5px, 1.18vw, 13px) / 1.55 var(--sans);
+        user-select: none;
+      }
+      .tour .scene {
+        position: absolute;
+        inset: 0;
+        visibility: hidden;
+        opacity: 0;
+      }
+      .tour .scene.on {
+        visibility: visible;
+        opacity: 1;
+      }
+      .tour .cols {
+        position: absolute;
+        inset: 0 0 2.1em 0;
+        display: flex;
+      }
+      .tour .src,
+      .tour .prev {
+        position: relative;
+        min-width: 0;
+        overflow: hidden;
+      }
+      .tour .src {
+        flex: 0 0 50%;
+        padding: 1em 0;
+        border-right: 1px solid var(--rule);
+        font: 400 0.92em/1.75 var(--mono);
+      }
+      .tour .prev {
+        flex: 1 1 0;
+        padding: 1.2em 1.6em;
+      }
+      .tour .prev > div {
+        will-change: transform;
+      }
+      .tour .ln {
+        display: flex;
+        gap: 1em;
+        height: 1.75em;
+        padding-right: 0.8em;
+        white-space: pre;
+      }
+      .tour .ln i {
+        flex: none;
+        width: 2.2em;
+        color: var(--muted);
+        font-style: normal;
+        text-align: right;
+        opacity: 0.7;
+      }
+      .tour .ln.hl {
+        background: color-mix(in srgb, var(--accent) 14%, transparent);
+      }
+      .tour .caret {
+        display: inline-block;
+        width: 1.5px;
+        height: 1.15em;
+        margin-left: 1px;
+        vertical-align: -0.2em;
+        background: var(--accent);
+        animation: tour-blink 1s steps(2, start) infinite;
+      }
+      @keyframes tour-blink {
+        to {
+          visibility: hidden;
+        }
+      }
+      .tour .h {
+        color: var(--accent);
+        font-weight: 600;
+      }
+      .tour h4 {
+        margin: 0 0 0.5em;
+        font: 700 1.55em/1.3 var(--serif);
+      }
+      .tour h5 {
+        margin: 1em 0 0.35em;
+        font: 700 1.12em/1.3 var(--serif);
+      }
+      .tour p {
+        margin: 0 0 0.7em;
+      }
+      .tour .blk {
+        margin: 0 -0.6em 0.5em;
+        padding: 0.15em 0.6em;
+        border-radius: 6px;
+        transition: none;
+      }
+      .tour .blk.hl {
+        background: color-mix(in srgb, var(--accent) 14%, transparent);
+        box-shadow: inset 2px 0 var(--accent);
+      }
+      .tour .status {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        display: flex;
+        align-items: center;
+        gap: 1.4em;
+        height: 2.1em;
+        padding: 0 1em;
+        border-top: 1px solid var(--rule);
+        background: var(--paper-2);
+        color: var(--muted);
+        font: 400 0.85em/1 var(--mono);
+      }
+      .tour .status .u {
+        color: var(--accent);
+      }
+      .tour .key {
+        position: absolute;
+        left: 50%;
+        bottom: 3.6em;
+        z-index: 6;
+        display: flex;
+        gap: 0.4em;
+        translate: -50% 0;
+        visibility: hidden;
+        opacity: 0;
+      }
+      .tour .key kbd {
+        min-width: 2.3em;
+        padding: 0.3em 0.6em;
+        border-radius: 0.55em;
+        background: var(--paper);
+        box-shadow: 0 0.35em 1.1em -0.2em rgb(40 30 20 / 0.35), 0 0 0 1px var(--rule), inset 0 -0.15em 0 var(--rule);
+        font: 500 1.35em/1.2 var(--mono);
+        text-align: center;
+      }
+      .tour .cur {
+        position: absolute;
+        z-index: 7;
+        width: 1.9em;
+        height: 1.9em;
+        margin: -0.15em 0 0 -0.35em;
+        filter: drop-shadow(0 0.2em 0.35em rgb(0 0 0 / 0.3));
+        visibility: hidden;
+        opacity: 0;
+      }
+      .tour .rip {
+        position: absolute;
+        z-index: 6;
+        width: 2.6em;
+        height: 2.6em;
+        margin: -1.3em 0 0 -1.3em;
+        border: 2px solid var(--accent);
+        border-radius: 50%;
+        visibility: hidden;
+        opacity: 0;
+      }
+      .tour .progress {
+        position: absolute;
+        left: 0;
+        top: 0;
+        z-index: 5;
+        width: 100%;
+        height: 3px;
+        background: var(--accent);
+        opacity: 0.85;
+        transform: scaleX(0);
+        transform-origin: left;
+      }
+      .tour .pill {
+        position: absolute;
+        right: 1.2em;
+        top: 1.1em;
+        z-index: 4;
+        display: flex;
+        align-items: center;
+        gap: 0.55em;
+        padding: 0.45em 0.9em;
+        border: 1px solid var(--rule);
+        border-radius: 999px;
+        background: var(--paper);
+        box-shadow: 0 0.5em 1.4em -0.5em rgb(40 30 20 / 0.35);
+        font: 500 0.88em/1 var(--sans);
+        visibility: hidden;
+        opacity: 0;
+      }
+      .tour .pill::before {
+        content: "";
+        width: 0.6em;
+        height: 0.6em;
+        border-radius: 50%;
+        background: var(--ok);
+      }
+      .tour .val {
+        padding: 0 0.3em;
+        border-radius: 4px;
+        font-weight: 700;
+      }
+      .tour .tag {
+        position: absolute;
+        right: 1.2em;
+        bottom: 3.2em;
+        padding: 0.45em 0.9em;
+        border-radius: 999px;
+        background: var(--ink);
+        color: var(--paper);
+        font: 500 0.85em/1 var(--sans);
+        visibility: hidden;
+        opacity: 0;
+      }
+      .tour .tb {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 0;
+        z-index: 3;
+        display: flex;
+        align-items: center;
+        gap: 0.5em;
+        height: 2.2em;
+        padding: 0 1em;
+        border-bottom: 1px solid var(--rule);
+        background: var(--paper-2);
+        color: var(--muted);
+        font: 400 0.85em/1 var(--sans);
+      }
+      .tour .tb .dot {
+        color: var(--accent);
+        opacity: 0;
+      }
+      .tour .tb + .cols {
+        top: 2.2em;
+      }
+      .tour .banner {
+        position: absolute;
+        left: 1em;
+        right: 1em;
+        top: 3em;
+        z-index: 5;
+        display: flex;
+        align-items: center;
+        gap: 0.8em;
+        padding: 0.75em 1em;
+        border: 1px solid var(--rule);
+        border-radius: 10px;
+        background: var(--paper);
+        box-shadow: var(--shadow);
+        visibility: hidden;
+        opacity: 0;
+      }
+      .tour .banner span {
+        flex: 1;
+      }
+      .tour .btn {
+        padding: 0.4em 0.9em;
+        border: 1px solid var(--rule);
+        border-radius: 7px;
+        background: var(--paper);
+        font: 500 0.92em/1 var(--sans);
+        white-space: nowrap;
+      }
+      .tour .btn.keep {
+        border-color: var(--accent);
+      }
+      .tour .toast {
+        position: absolute;
+        left: 50%;
+        top: 3.2em;
+        z-index: 5;
+        padding: 0.5em 1.2em;
+        translate: -50% 0;
+        border: 1px solid var(--rule);
+        border-radius: 999px;
+        background: var(--paper);
+        box-shadow: 0 0.5em 1.4em -0.5em rgb(40 30 20 / 0.4);
+        visibility: hidden;
+        opacity: 0;
+      }
+      .tour .pal {
+        position: absolute;
+        left: 50%;
+        top: 13%;
+        z-index: 5;
+        width: 66%;
+        translate: -50% 0;
+        overflow: hidden;
+        border: 1px solid var(--rule);
+        border-radius: 12px;
+        background: var(--paper);
+        box-shadow: var(--shadow);
+        visibility: hidden;
+        opacity: 0;
+      }
+      .tour .pal .q {
+        height: 2.6em;
+        padding: 0.7em 1em;
+        border-bottom: 1px solid var(--rule);
+        font-size: 1.02em;
+      }
+      .tour .pal .r {
+        display: flex;
+        gap: 0.8em;
+        align-items: baseline;
+        margin: 0.25em;
+        padding: 0.4em 0.7em;
+        border-radius: 7px;
+      }
+      .tour .pal .r small {
+        flex: none;
+        width: 4.6em;
+        color: var(--muted);
+        font: 500 0.72em/1 var(--sans);
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+      }
+      .tour .pal .r em {
+        margin-left: auto;
+        color: var(--muted);
+        font: 400 0.8em/1 var(--mono);
+        font-style: normal;
+      }
+      .tour .pal .r.sel {
+        background: var(--paper-2);
+        box-shadow: 0 0 0 1px var(--rule);
+      }
+      .tour .findbar {
+        position: absolute;
+        right: 1.1em;
+        top: 1em;
+        z-index: 4;
+        display: flex;
+        align-items: center;
+        gap: 0.7em;
+        padding: 0.45em 0.7em;
+        border: 1px solid var(--rule);
+        border-radius: 9px;
+        background: var(--paper);
+        box-shadow: 0 0.5em 1.4em -0.5em rgb(40 30 20 / 0.4);
+        visibility: hidden;
+        opacity: 0;
+      }
+      .tour .findbar .in {
+        min-width: 6em;
+        padding: 0.25em 0.5em;
+        border: 1px solid var(--accent);
+        border-radius: 5px;
+      }
+      .tour .findbar .n {
+        min-width: 4.4em;
+        color: var(--muted);
+        font: 400 0.9em/1 var(--mono);
+        text-align: right;
+      }
+      .tour mark {
+        padding: 0 0.1em;
+        border-radius: 3px;
+        background: none;
+        color: inherit;
+      }
+      .tour mark.on {
+        background: color-mix(in srgb, #f2c230 45%, transparent);
+      }
+      .tour mark.cur-hit {
+        background: #f2a530;
+        color: #1a1917;
+      }
+      .tour .chips {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 0;
+        z-index: 3;
+        display: flex;
+        gap: 0.4em;
+        padding: 0.8em 1em 0;
+        border-bottom: 1px solid var(--rule);
+        background: var(--paper-2);
+      }
+      .tour .chips span {
+        padding: 0.45em 0.95em;
+        border: 1px solid transparent;
+        border-bottom: 0;
+        border-radius: 8px 8px 0 0;
+        color: var(--muted);
+        font: 400 0.88em/1 var(--mono);
+      }
+      .tour .chips span.on {
+        border-color: var(--rule);
+        background: var(--paper);
+        color: var(--ink);
+      }
+      .tour .fmt {
+        position: absolute;
+        inset: 2.9em 0 0 0;
+        display: grid;
+        place-content: center;
+        gap: 0.8em;
+        padding: 1.5em 3em;
+        visibility: hidden;
+        opacity: 0;
+      }
+      .tour .bars i {
+        display: block;
+        height: 0.55em;
+        margin: 0.55em 0;
+        border-radius: 99px;
+        background: var(--rule);
+      }
+      .tour .bars i:nth-child(3n) {
+        width: 82%;
+      }
+      .tour .bars i:nth-child(3n + 1) {
+        width: 94%;
+      }
+      .tour .code {
+        padding: 0.8em 1em;
+        border-radius: 8px;
+        background: #26241f;
+        color: #ebe7dc;
+        font: 400 0.9em/1.7 var(--mono);
+      }
+      .tour .code b {
+        color: #d68ee0;
+        font-weight: 400;
+      }
+      .tour .code u {
+        color: #98c379;
+        text-decoration: none;
+      }
+      .tour .eq {
+        font: 400 2.1em/1.3 var(--serif);
+        font-style: italic;
+        text-align: center;
+      }
+      .tour .title {
+        font: 700 1.5em/1.3 var(--serif);
+        text-align: center;
+      }
+      .tour .meta {
+        color: var(--muted);
+        text-align: center;
+      }
+      .tour .two {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1.6em;
+      }
+      .tour .flow {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5em;
+      }
+      .tour .flow b {
+        padding: 0.7em 1.1em;
+        border: 1.5px solid var(--ink);
+        border-radius: 9px;
+        background: var(--paper-2);
+        font: 500 1em/1 var(--sans);
+      }
+      .tour .flow b.hot {
+        border-color: var(--accent);
+        background: color-mix(in srgb, var(--accent) 12%, var(--paper));
+        color: var(--accent);
+      }
+      .tour .flow s {
+        width: 2.2em;
+        height: 1.5px;
+        background: var(--ink);
+        position: relative;
+        text-decoration: none;
+      }
+      .tour .flow s::after {
+        content: "";
+        position: absolute;
+        right: -1px;
+        top: -3.5px;
+        border: 4px solid transparent;
+        border-left: 7px solid var(--ink);
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .tour .caret {
+          animation: none;
+        }
+      }
+
+      .tour .stage {
+        position: static;
+        top: auto;
+      }
+      .tour .step {
+        padding: 0.55rem 0 0.55rem 1rem;
+        border: 0;
+        border-left: 2px solid var(--line);
+        border-radius: 0;
+        background: none;
+        color: var(--muted);
+      }
+      .tour .step::before {
+        content: none;
+      }
+      .tour .step b {
+        color: var(--fg);
+        font: 600 1rem/1.5 var(--sans);
+        letter-spacing: 0;
+      }
+      .tour .step:hover {
+        border-left-color: var(--muted);
+      }
+      .tour .step.on {
+        border-left-color: var(--accent);
+        background: none;
+      }
+      .tour .step .fill {
+        left: -2px;
+        width: 2px;
+        height: 100%;
+        transform-origin: top;
+        transform: scaleY(0);
+      }
+      .tour .step .dot {
+        display: inline-block;
+        width: 0.6em;
+        height: 0.6em;
+        margin-right: 0.4em;
+        border-radius: 50%;
+        background: var(--accent);
+        vertical-align: 0.04em;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <a href="./"><img src="favicon.svg" alt="" />Washi 和紙</a>
+      <a href="https://github.com/kiwamizamurai/washi">GitHub</a>
+      <a href="ja/">日本語</a>
+    </header>
+    <main>
+      <h1>Washi</h1>
+      <p>A small macOS app for reading Markdown, Typst, LaTeX and Mermaid. It redraws when the file changes. Press <kbd>⌘E</kbd> to edit with a live preview.</p>
+      <p><a href="#install">Install</a> · <a href="https://github.com/kiwamizamurai/washi/releases">Releases</a></p>
+      <picture>
+        <source srcset="assets/shot-markdown-dark.jpg" media="(prefers-color-scheme: dark)" />
+        <img src="assets/shot-markdown-light.jpg" width="1221" height="641" alt="Washi showing a Markdown file" />
+      </picture>
+
+      <h2>What it does</h2>
+          <div class="tour" id="tour">
+            <ol class="steps">
+              <li><button class="step" type="button"><b>Edit with a live preview</b><span><kbd>⌘E</kbd> opens an editor next to the preview. The preview updates as you type, and Typst gets completion and error markers.</span></button></li>
+              <li><button class="step" type="button"><b>Redraws when the file is saved</b><span>Save from any editor and Washi redraws in place, keeping your scroll position. Files it includes (<code>\input</code>, <code>#include</code>, images) are watched too.</span></button></li>
+              <li><button class="step" type="button"><b>Jump between source and preview</b><span><kbd>⌘</kbd>-click the preview to go to the source line. The preview follows the cursor.</span></button></li>
+              <li><button class="step" type="button"><b>Unsaved changes and conflicts</b><span><i class="dot"></i>marks unsaved changes. If the file changed on disk, Washi asks which version to keep instead of overwriting.</span></button></li>
+              <li><button class="step" type="button"><b>Command palette and find</b><span><kbd>⌘K</kbd> lists commands, recent files and headings. <kbd>⌘F</kbd> shows how many matches there are, and a thin line at the top shows how far you have read.</span></button></li>
+              <li><button class="step" type="button"><b>Four formats</b><span>Markdown, Typst, LaTeX and Mermaid. Typst becomes HTML inside the app, and LaTeX becomes HTML through pandoc. Drawings such as CeTZ and TikZ appear as figures.</span></button></li>
+            </ol>
+            <div class="stage window">
+              <div class="bar"><i></i><i></i><i></i><span>showcase.md</span></div>
+              <div class="screen" aria-hidden="true">
+                <div class="scene" data-title="showcase.md">
+                  <div class="cols">
+                    <div class="src">
+                      <div class="ln"><i>1</i><span class="h"># Washi Showcase</span></div>
+                      <div class="ln"><i>2</i></div>
+                      <div class="ln"><i>3</i><span>A viewer you can read quietly.</span></div>
+                      <div class="ln"><i>4</i></div>
+                      <div class="ln"><i>5</i><span class="h t5">## Edit with a live preview</span></div>
+                      <div class="ln"><i>6</i></div>
+                      <div class="ln"><i>7</i><span class="t7">Type here, and the page follows.</span><span class="caret"></span></div>
+                    </div>
+                    <div class="prev"><div>
+                      <h4>Washi Showcase</h4>
+                      <p>A viewer you can read quietly.</p>
+                      <h5 class="p5">Edit with a live preview</h5>
+                      <p class="p7">Type here, and the page follows.</p>
+                    </div></div>
+                  </div>
+                  <div class="status"><span class="st">Saved</span><span>7:1</span></div>
+                  <div class="key"><kbd>⌘</kbd><kbd>E</kbd></div>
+                </div>
+
+                <div class="scene" data-title="trip.md">
+                  <div class="progress"></div>
+                  <div class="cols"><div class="prev"><div class="pg">
+                    <h4>Trip to Kyoto</h4>
+                    <h5>Plan</h5>
+                    <p>Stay: <span class="val a">3 nights</span></p>
+                    <p>Budget: <span class="val b">€420</span></p>
+                    <h5>Days</h5>
+                    <p>Day 1: Fushimi Inari, early.</p>
+                    <p>Day 2: Arashiyama and the river.</p>
+                    <h5>Notes</h5>
+                    <p>Book the ryokan before Friday.</p>
+                  </div></div></div>
+                  <div class="pill">Saved in your editor</div>
+                  <div class="tag">Same scroll position</div>
+                  <div class="status"><span>trip.md</span><span>100%</span></div>
+                </div>
+
+                <div class="scene" data-title="release-notes.md">
+                  <div class="cols">
+                    <div class="src">
+                      <div class="ln l1"><i>1</i><span class="h"># Release notes</span></div>
+                      <div class="ln"><i>2</i></div>
+                      <div class="ln l3"><i>3</i><span>Faster startup, calmer UI.</span></div>
+                      <div class="ln"><i>4</i></div>
+                      <div class="ln l5"><i>5</i><span class="h">## Highlights</span></div>
+                      <div class="ln"><i>6</i></div>
+                      <div class="ln l7"><i>7</i><span>- Live preview beside the source</span></div>
+                      <div class="ln l9"><i>8</i><span>- Search that counts matches</span></div>
+                    </div>
+                    <div class="prev"><div class="pg">
+                      <div class="blk b1"><h4>Release notes</h4></div>
+                      <div class="blk b3"><p>Faster startup, calmer UI.</p></div>
+                      <div class="blk b5"><h5>Highlights</h5></div>
+                      <div class="blk b7"><p>• Live preview beside the source</p></div>
+                      <div class="blk b9"><p>• Search that counts matches</p></div>
+                    </div></div>
+                  </div>
+                  <div class="status"><span>Source ⇄ page</span><span class="pos">3:1</span></div>
+                  <div class="key"><kbd>⌘</kbd><kbd>click</kbd></div>
+                  <div class="rip"></div>
+                  <svg class="cur" viewBox="0 0 24 24"><path d="M4 2l15 9-6.5 1.7L9 19.5z" fill="#1a1917" stroke="#fff" stroke-width="1.6" stroke-linejoin="round" /></svg>
+                </div>
+
+                <div class="scene" data-title="report.typ">
+                  <div class="tb"><span class="dot">●</span><span>report.typ — Washi</span></div>
+                  <div class="cols">
+                    <div class="src">
+                      <div class="ln"><i>1</i><span class="h">= Quarterly report</span></div>
+                      <div class="ln"><i>2</i></div>
+                      <div class="ln"><i>3</i><span>The results are in the table below.</span></div>
+                      <div class="ln"><i>4</i></div>
+                      <div class="ln"><i>5</i><span>Revenue grew steadily.</span><span class="t5">&nbsp;Draft edit</span><span class="caret"></span></div>
+                    </div>
+                    <div class="prev"><div>
+                      <h4>Quarterly report</h4>
+                      <p>The results are in the table below.</p>
+                      <p>Revenue grew steadily.<span class="p5"> Draft edit</span></p>
+                    </div></div>
+                  </div>
+                  <div class="banner"><span>The file on disk was changed elsewhere.</span><b class="btn keep">Keep mine</b><b class="btn">Load the disk version</b></div>
+                  <div class="status"><span class="st">Saved</span><span>5:35</span></div>
+                  <div class="toast">Saved</div>
+                  <div class="key"><kbd>⌘</kbd><kbd>S</kbd></div>
+                  <div class="rip"></div>
+                  <svg class="cur" viewBox="0 0 24 24"><path d="M4 2l15 9-6.5 1.7L9 19.5z" fill="#1a1917" stroke="#fff" stroke-width="1.6" stroke-linejoin="round" /></svg>
+                </div>
+
+                <div class="scene" data-title="showcase.md">
+                  <div class="progress"></div>
+                  <div class="cols"><div class="prev"><div class="pg">
+                    <h4>Washi Showcase</h4>
+                    <p>Open <mark>the</mark> palette, search <mark>the</mark> page, and see how far you have read.</p>
+                    <h5>1. Text and inline elements</h5>
+                    <p>Matches are counted, so you know <mark>the</mark> size of <mark>the</mark> task.</p>
+                    <h5>2. Lists and tasks</h5>
+                    <p>A thin line along <mark>the</mark> top shows <mark>the</mark> progress.</p>
+                  </div></div></div>
+                  <div class="findbar"><span>Find</span><span class="in">the</span><span class="n">3 / 6</span></div>
+                  <div class="pal">
+                    <div class="q"><span class="qt">#</span><span class="caret"></span></div>
+                    <div class="r"><small>Heading</small><span>Washi Showcase</span><em>H1</em></div>
+                    <div class="r"><small>Heading</small><span>1. Text and inline elements</span><em>H2</em></div>
+                    <div class="r"><small>Heading</small><span>2. Lists and tasks</span><em>H2</em></div>
+                    <div class="r"><small>Heading</small><span>3. Tables</span><em>H2</em></div>
+                  </div>
+                  <div class="status"><span>showcase.md</span><span>⌘K</span></div>
+                  <div class="key"><kbd>⌘</kbd><kbd>K</kbd></div>
+                </div>
+
+                <div class="scene" data-title="README.md">
+                  <div class="chips"><span class="on">README.md</span><span>report.typ</span><span>paper.tex</span><span>flow.mmd</span></div>
+                  <div class="fmt">
+                    <h4>Washi</h4>
+                    <div class="bars"><i></i><i></i><i></i></div>
+                    <div class="code"><b>fn</b> main() { println!(<u>"hello"</u>); }</div>
+                  </div>
+                  <div class="fmt">
+                    <div class="title">Washi Technical Report</div>
+                    <div class="meta">Typst, compiled inside the app</div>
+                    <div class="eq">∫₀¹ x² dx = ⅓</div>
+                    <div class="bars"><i></i><i></i></div>
+                  </div>
+                  <div class="fmt">
+                    <div class="title">A Note on Quiet Reading</div>
+                    <div class="meta">LaTeX, converted with pandoc</div>
+                    <div class="two"><div class="bars"><i></i><i></i><i></i><i></i><i></i></div><div class="bars"><i></i><i></i><i></i><i></i><i></i></div></div>
+                  </div>
+                  <div class="fmt">
+                    <div class="flow"><b>Source</b><s></s><b class="hot">Renderer</b><s></s><b>View</b></div>
+                    <div class="meta">Mermaid diagrams, drawn as SVG</div>
+                  </div>
+                  <div class="status"><span>4 formats</span><span>1 window</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+      <ul>
+        <li><code>washi file.md</code> opens a file from the terminal, and <code>--json</code> prints a stable result.</li>
+        <li>No telemetry. It uses the network only to fetch Typst <code>@preview</code> packages and, once a day, to ask GitHub for the latest version (you can turn this off).</li>
+      </ul>
+
+      <h2>Screenshots</h2>
+      <figure><img src="assets/shot-typst.jpg" width="1221" height="641" alt="A Typst report" /><figcaption>report.typ</figcaption></figure>
+      <figure><img src="assets/shot-latex.jpg" width="1221" height="641" alt="A LaTeX paper" /><figcaption>paper.tex</figcaption></figure>
+      <figure><img src="assets/shot-split.jpg" width="1221" height="641" alt="Editor and preview side by side" /><figcaption><kbd>⌘E</kbd>: source on the left, preview on the right</figcaption></figure>
+      <figure><img src="assets/shot-palette.jpg" width="1221" height="641" alt="The command palette" /><figcaption><kbd>⌘K</kbd>, then <kbd>#</kbd> for headings</figcaption></figure>
+
+      <h2>Compared with other apps</h2>
+      <div class="table">
+        <table>
+          <thead><tr><th></th><th>Washi</th><th><a href="https://typeset.osteele.com">Typeset Viewer</a></th><th><a href="https://github.com/dotsg/SuperGoodViewer">SuperGoodViewer</a></th><th><a href="https://github.com/Hyp4tia/Osh">Osh</a></th><th><a href="https://github.com/schmayterling/hibi">hibi</a></th><th><a href="https://github.com/texpile/texpile">Texpile</a></th><th><a href="https://github.com/Oleafly/Oleafly">Oleafly</a></th><th><a href="https://github.com/Andesprit/quire-writer">Quire Writer</a></th><th><a href="https://github.com/zouwei/moraya">Moraya</a></th></tr></thead>
+          <tbody>
+          <tr><th>Typst files</th><td>Yes</td><td>Yes</td><td>No (read as Markdown)</td><td>No (math blocks only)</td><td>Yes</td><td>Yes</td><td>Yes</td><td>Yes</td><td>Yes (downloads the <code>typst CLI</code>)</td></tr>
+          <tr><th>LaTeX files</th><td>Yes (pandoc)</td><td>Yes (latexmk)</td><td>No</td><td>No</td><td>Yes (Tectonic, compiled by hand)</td><td>Yes</td><td>Yes</td><td>Yes</td><td>No</td></tr>
+          <tr><th>Mermaid <code>.mmd</code> files</th><td>Yes</td><td>Not stated</td><td>No</td><td>Quick Look only</td><td>Yes</td><td>No</td><td>Diagram Composer import</td><td>No</td><td>No</td></tr>
+          <tr><th>Other formats</th><td>None</td><td>PDF</td><td>PDF</td><td>None</td><td>About 15 (rST, AsciiDoc, Org, MDX, HTML, …)</td><td>PDF in a folder</td><td>PDF imported as LaTeX</td><td>Quarto</td><td>None</td></tr>
+          <tr><th>Shows</th><td>HTML</td><td>PDF pages</td><td>PDF pages</td><td>HTML</td><td>Typst SVG, LaTeX PDF</td><td>PDF, Typst preview</td><td>PDF pages</td><td>PDF / HTML / tinymist</td><td>WYSIWYG, Typst SVG</td></tr>
+          <tr><th>Redraws when another app saves the open file</th><td>Yes</td><td>Yes</td><td>Yes</td><td>Yes, not while editing</td><td>Only when you return to the tab</td><td>Editor text only; LaTeX needs live preview (off by default)</td><td>Folders opened in place, with auto-compile (off by default)</td><td>Yes, as an edit to review</td><td>Only when the window gets focus</td></tr>
+          <tr><th>Redraws when an included file changes</th><td>Yes</td><td>Yes</td><td>Images only</td><td>No</td><td>Typst in a workspace</td><td>Not stated</td><td>No</td><td>LaTeX, Typst</td><td>No</td></tr>
+          <tr><th>Preview to source jump</th><td>Yes</td><td>Not stated</td><td>No</td><td>No</td><td>Markdown only</td><td>Typst, LaTeX</td><td>Typst, LaTeX</td><td>Typst</td><td>No</td></tr>
+          <tr><th>CLI</th><td>Open, <code>--json</code>, exit codes, stdin</td><td><code>--render</code>, <code>--doctor</code>, <code>--appearance</code></td><td>Open, export, stdin</td><td><code>--export-pdf</code></td><td>No</td><td>No</td><td><code>oleaflyc</code> (build from source)</td><td>No</td><td>No</td></tr>
+          <tr><th>Agent integration</th><td>CLI</td><td>Claude Code / Codex</td><td>CLI export</td><td><code>.skill</code> files</td><td>MCP server</td><td>MCP server, ACP</td><td>MCP, ACP</td><td>ACP agents</td><td>MCP client, AI chat</td></tr>
+          <tr><th>Platforms</th><td>macOS arm64</td><td>macOS 14+ arm64</td><td>macOS, Windows, Linux</td><td>macOS 12+</td><td>macOS, Windows, Linux</td><td>macOS, Windows, Linux</td><td>macOS arm64, Windows, Linux</td><td>macOS arm64; Windows, Linux experimental</td><td>macOS, Windows, Linux</td></tr>
+          <tr><th>Notarized</th><td>No</td><td>Yes</td><td>No</td><td>Yes</td><td>Yes</td><td>Yes</td><td>Yes</td><td>Yes</td><td>Yes</td></tr>
+          <tr><th>macOS download</th><td>25.0 MB</td><td>29.6 MB</td><td>40.8 MB</td><td>38.2 MB</td><td>170.1 MB</td><td>261.1 MB</td><td>201.1 MB</td><td>58.8 MB</td><td>8.0 MB</td></tr>
+          <tr><th>License</th><td>MIT</td><td>Proprietary, free</td><td>MIT</td><td>GPL-3.0</td><td>GPL-3.0-only</td><td>AGPL-3.0</td><td>AGPL-3.0-or-later</td><td>GPL-3.0-or-later</td><td>Apache-2.0</td></tr>
+          <tr><th>Version</th><td>0.1.0</td><td>0.8.0</td><td>1.1.1</td><td>1.0.12</td><td>Nightly only</td><td>1.5.0</td><td>0.4.6 (beta)</td><td>0.2.9</td><td>0.45.17</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Typeset Viewer is the closest app to Washi: a reader that redraws on save, follows included and <code>.bib</code> files and keeps your place. It shows the real typeset PDF, is notarized and adds notes, AI review and presentation mode, but it is closed source. Washi is open source and shows HTML instead of pages, so it loses page layout and some LaTeX packages. hibi opens the most formats. If you want to write in the app, the others are editors first.</p>
+
+      <h2 id="install">Install</h2>
+      <p>Apple Silicon Macs only.</p>
+      <pre><code>brew install --cask kiwamizamurai/tap/washi
+washi notes.md</code></pre>
+      <p>Or download the zip from <a href="https://github.com/kiwamizamurai/washi/releases">Releases</a> and move it to Applications. The app is not signed, so allow it once under System Settings → Privacy &amp; Security.</p>
+    </main>
+    <footer>© 2026 kiwamizamurai · MIT License</footer>
+      <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"
+      integrity="sha384-g4NTh/Iv5PPU4xPyhEWqPcwtNXOvdaDI8LLnyYfyNZOjKJeYQyjzQ9X5275eBjpt"
+      crossorigin="anonymous"
+      referrerpolicy="no-referrer"
+    ></script>
+    <script>
+      (() => {
+        const root = document.getElementById("tour");
+        if (!root) return;
+        const steps = [...root.querySelectorAll(".step")];
+        const scenes = [...root.querySelectorAll(".scene")];
+        const label = root.querySelector(".stage .bar span");
+        const showStatic = (i) => {
+          steps.forEach((s, k) => s.classList.toggle("on", k === i));
+          scenes.forEach((s, k) => {
+            s.style.visibility = k === i ? "visible" : "hidden";
+            s.style.opacity = k === i ? "1" : "0";
+          });
+          label.textContent = scenes[i].dataset.title;
+        };
+        if (!window.gsap) {
+          showStatic(0);
+          steps.forEach((s, i) => s.addEventListener("click", () => showStatic(i)));
+          return;
+        }
+
+        const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+        const ACCENT_FLASH = "rgba(224, 116, 95, 0.38)";
+        const CLEAR = "rgba(224, 116, 95, 0)";
+        const $ = (el, sel) => el.querySelector(sel);
+        const $$ = (el, sel) => [...el.querySelectorAll(sel)];
+        const rel = (scene, el) => {
+          const s = scene.getBoundingClientRect();
+          const r = el.getBoundingClientRect();
+          return { x: r.left - s.left, y: r.top - s.top, w: r.width, h: r.height };
+        };
+        const hide = (...els) => gsap.set(els.flat(), { autoAlpha: 0 });
+
+        const type = (tl, targets, text, at, dur) => {
+          const o = { n: 0 };
+          tl.to(o, {
+            n: text.length,
+            duration: dur,
+            ease: "none",
+            onUpdate() {
+              const part = text.slice(0, Math.round(o.n));
+              targets.forEach(([el, fmt]) => (el.textContent = fmt ? fmt(part) : part));
+            },
+          }, at);
+        };
+        const pop = (tl, key, at, hold = 0.9) => {
+          tl.fromTo(key, { autoAlpha: 0, y: 14, scale: 0.9 }, { autoAlpha: 1, y: 0, scale: 1, duration: 0.35, ease: "back.out(2.2)" }, at)
+            .to(key, { scale: 0.93, duration: 0.09 }, at + 0.45)
+            .to(key, { scale: 1, duration: 0.14 }, at + 0.54)
+            .to(key, { autoAlpha: 0, y: -8, duration: 0.3 }, at + hold + 0.3);
+        };
+        const press = (tl, scene, rip, cur, at) => {
+          tl.to(cur, { scale: 0.8, duration: 0.09 }, at).to(cur, { scale: 1, duration: 0.16 }, at + 0.09);
+          tl.call(() => {
+            const c = gsap.getProperty(cur, "x");
+            const d = gsap.getProperty(cur, "y");
+            gsap.set(rip, { x: c, y: d });
+          }, null, at);
+          tl.fromTo(rip, { autoAlpha: 0.9, scale: 0.2 }, { autoAlpha: 0, scale: 1.3, duration: 0.55, ease: "power2.out" }, at + 0.01);
+        };
+        const toggle = (tl, el, cls, on, at) => tl.call(() => el.classList.toggle(cls, on), null, at);
+        const flash = (tl, el, text, at) => {
+          tl.call(() => (el.textContent = text), null, at);
+          tl.fromTo(el, { backgroundColor: ACCENT_FLASH }, { backgroundColor: CLEAR, duration: 1.1, ease: "power1.out" }, at);
+        };
+
+        const build = [
+          (sc) => {
+            const src = $(sc, ".src");
+            const t5 = $(sc, ".t5"), t7 = $(sc, ".t7"), p5 = $(sc, ".p5"), p7 = $(sc, ".p7");
+            const st = $(sc, ".st");
+            const key = $(sc, ".key");
+            const T5 = "## Edit with a live preview";
+            const T7 = "Type here, and the page follows.";
+            const init = () => {
+              gsap.set(src, { flexBasis: "0%", opacity: 0 });
+              hide(key);
+              t5.textContent = t7.textContent = p5.textContent = p7.textContent = "";
+              st.textContent = "Saved";
+              st.classList.remove("u");
+            };
+            const tl = gsap.timeline({ paused: true });
+            pop(tl, key, 0.3);
+            tl.to(src, { flexBasis: "50%", opacity: 1, duration: 0.9, ease: "power3.inOut" }, 0.7);
+            toggle(tl, st, "u", true, 2.0);
+            tl.call(() => (st.textContent = "● Unsaved"), null, 2.0);
+            type(tl, [[t5], [p5, (s) => s.replace(/^#+ ?/, "")]], T5, 2.0, 1.3);
+            type(tl, [[t7], [p7]], T7, 3.7, 1.6);
+            tl.to({}, { duration: 1.3 });
+            return { tl, init };
+          },
+          (sc) => {
+            const bar = $(sc, ".progress");
+            const pg = $(sc, ".pg");
+            const pill = $(sc, ".pill"), tag = $(sc, ".tag");
+            const a = $(sc, ".val.a"), b = $(sc, ".val.b");
+            const init = () => {
+              gsap.set(pg, { y: "-2.2em" });
+              gsap.set(bar, { scaleX: 0 });
+              hide(pill, tag);
+              a.textContent = "3 nights";
+              b.textContent = "€420";
+              gsap.set([a, b], { backgroundColor: CLEAR });
+            };
+            const tl = gsap.timeline({ paused: true });
+            tl.to(bar, { scaleX: 0.34, duration: 0.8, ease: "power2.out" }, 0.2);
+            tl.fromTo(pill, { autoAlpha: 0, y: -10 }, { autoAlpha: 1, y: 0, duration: 0.4, ease: "back.out(2)" }, 0.9);
+            flash(tl, a, "4 nights", 1.5);
+            tl.fromTo(pill, { scale: 1 }, { scale: 1.06, duration: 0.15, yoyo: true, repeat: 1 }, 2.5);
+            flash(tl, b, "€540", 2.6);
+            tl.fromTo(tag, { autoAlpha: 0, y: 8 }, { autoAlpha: 1, y: 0, duration: 0.4 }, 3.5);
+            tl.to({}, { duration: 2.3 });
+            return { tl, init };
+          },
+          (sc) => {
+            const cur = $(sc, ".cur"), rip = $(sc, ".rip"), key = $(sc, ".key");
+            const pos = $(sc, ".pos");
+            const lines = { 3: $(sc, ".l3"), 5: $(sc, ".l5"), 7: $(sc, ".l7"), 9: $(sc, ".l9") };
+            const blks = { 3: $(sc, ".b3"), 5: $(sc, ".b5"), 7: $(sc, ".b7"), 9: $(sc, ".b9") };
+            const pg = $(sc, ".pg");
+            const caret = document.createElement("span");
+            caret.className = "caret";
+            const clear = () => {
+              $$(sc, ".ln.hl, .blk.hl").forEach((e) => e.classList.remove("hl"));
+              caret.remove();
+            };
+            const focus = (n) => {
+              clear();
+              lines[n].classList.add("hl");
+              lines[n].append(caret);
+              blks[n].classList.add("hl");
+              pos.textContent = `${n === 9 ? 8 : n}:1`;
+            };
+            const init = () => {
+              clear();
+              pos.textContent = "3:1";
+              gsap.set(pg, { y: 0 });
+              hide(cur, rip, key);
+              const s = sc.getBoundingClientRect();
+              gsap.set(cur, { x: s.width * 0.9, y: s.height * 0.78 });
+            };
+            const to = (sel) => ({ x: () => { const r = rel(sc, $(sc, sel)); return r.x + Math.min(r.w * 0.5, 120); }, y: () => { const r = rel(sc, $(sc, sel)); return r.y + r.h * 0.5; } });
+            const tl = gsap.timeline({ paused: true });
+            tl.to(cur, { autoAlpha: 1, duration: 0.3 }, 0.2);
+            tl.to(cur, { ...to(".b7"), duration: 1.0, ease: "power3.inOut" }, 0.5);
+            pop(tl, key, 1.1, 1.0);
+            press(tl, sc, rip, cur, 1.9);
+            tl.call(() => focus(7), null, 2.0);
+            tl.to(cur, { autoAlpha: 0, duration: 0.3 }, 3.0);
+            tl.call(() => focus(9), null, 3.6);
+            tl.to(pg, { y: "-0.8em", duration: 0.6, ease: "power2.out" }, 3.6);
+            tl.to({}, { duration: 2.0 });
+            return { tl, init };
+          },
+          (sc) => {
+            const dot = $(sc, ".tb .dot"), st = $(sc, ".st");
+            const t5 = $(sc, ".t5"), p5 = $(sc, ".p5");
+            const banner = $(sc, ".banner"), toast = $(sc, ".toast");
+            const cur = $(sc, ".cur"), rip = $(sc, ".rip"), key = $(sc, ".key");
+            const TXT = " Draft edit";
+            const init = () => {
+              gsap.set(dot, { opacity: 0 });
+              hide(banner, toast, cur, rip, key);
+              t5.textContent = p5.textContent = "";
+              st.textContent = "Saved";
+              st.classList.remove("u");
+              const s = sc.getBoundingClientRect();
+              gsap.set(cur, { x: s.width * 0.78, y: s.height * 0.62 });
+            };
+            const tl = gsap.timeline({ paused: true });
+            type(tl, [[t5, (s) => s.replace(/ /g, " ")], [p5]], TXT, 0.4, 0.9);
+            tl.to(dot, { opacity: 1, duration: 0.2 }, 0.5);
+            tl.call(() => { st.textContent = "● Unsaved"; st.classList.add("u"); }, null, 0.5);
+            tl.fromTo(banner, { autoAlpha: 0, y: -16 }, { autoAlpha: 1, y: 0, duration: 0.5, ease: "power3.out" }, 1.7);
+            tl.to(cur, { autoAlpha: 1, duration: 0.3 }, 2.3);
+            tl.to(cur, { x: () => { const r = rel(sc, $(sc, ".btn.keep")); return r.x + r.w * 0.5; }, y: () => { const r = rel(sc, $(sc, ".btn.keep")); return r.y + r.h * 0.5; }, duration: 0.9, ease: "power3.inOut" }, 2.4);
+            press(tl, sc, rip, cur, 3.4);
+            tl.to(banner, { autoAlpha: 0, y: -16, duration: 0.4 }, 3.65);
+            tl.to(cur, { autoAlpha: 0, duration: 0.3 }, 3.7);
+            pop(tl, key, 4.1, 0.8);
+            tl.call(() => { st.textContent = "Saved"; st.classList.remove("u"); }, null, 4.7);
+            tl.to(dot, { opacity: 0, duration: 0.2 }, 4.7);
+            tl.fromTo(toast, { autoAlpha: 0, y: 10 }, { autoAlpha: 1, y: 0, duration: 0.35 }, 4.8);
+            tl.to(toast, { autoAlpha: 0, duration: 0.3 }, 5.9);
+            tl.to({}, { duration: 0.6 });
+            return { tl, init };
+          },
+          (sc) => {
+            const bar = $(sc, ".progress");
+            const pal = $(sc, ".pal"), key = $(sc, ".key");
+            const rows = $$(sc, ".pal .r");
+            const fb = $(sc, ".findbar"), fin = $(sc, ".findbar .in"), fn = $(sc, ".findbar .n");
+            const marks = $$(sc, "mark");
+            const init = () => {
+              gsap.set(bar, { scaleX: 0 });
+              hide(pal, key, fb);
+              gsap.set(rows, { autoAlpha: 0, y: 6 });
+              rows.forEach((r) => r.classList.remove("sel"));
+              marks.forEach((m) => m.classList.remove("on", "cur-hit"));
+              fin.textContent = "";
+              fn.textContent = "";
+            };
+            const select = (i) => rows.forEach((r, k) => r.classList.toggle("sel", k === i));
+            const hit = (i) => marks.forEach((m, k) => m.classList.toggle("cur-hit", k === i));
+            const tl = gsap.timeline({ paused: true });
+            pop(tl, key, 0.2, 0.8);
+            tl.fromTo(pal, { autoAlpha: 0, y: 10, scale: 0.97 }, { autoAlpha: 1, y: 0, scale: 1, duration: 0.45, ease: "power3.out" }, 0.6);
+            tl.to(rows, { autoAlpha: 1, y: 0, duration: 0.3, stagger: 0.09 }, 1.1);
+            tl.call(() => select(0), null, 1.7);
+            tl.call(() => select(1), null, 2.1);
+            tl.call(() => select(2), null, 2.5);
+            tl.to(pal, { autoAlpha: 0, y: -6, scale: 0.98, duration: 0.3 }, 3.1);
+            tl.to(bar, { scaleX: 0.58, duration: 0.9, ease: "power2.inOut" }, 3.1);
+            tl.fromTo(fb, { autoAlpha: 0, y: -10 }, { autoAlpha: 1, y: 0, duration: 0.4, ease: "back.out(2)" }, 3.8);
+            type(tl, [[fin]], "the", 4.2, 0.4);
+            tl.call(() => { fn.textContent = "– / 6"; marks.forEach((m) => m.classList.add("on")); }, null, 4.7);
+            tl.call(() => { fn.textContent = "1 / 6"; hit(0); }, null, 5.1);
+            tl.call(() => { fn.textContent = "2 / 6"; hit(1); }, null, 5.6);
+            tl.call(() => { fn.textContent = "3 / 6"; hit(2); }, null, 6.1);
+            tl.to({}, { duration: 1.2 });
+            return { tl, init };
+          },
+          (sc) => {
+            const chips = $$(sc, ".chips span");
+            const fmts = $$(sc, ".fmt");
+            const names = ["README.md", "report.typ", "paper.tex", "flow.mmd"];
+            const init = () => {
+              chips.forEach((c, i) => c.classList.toggle("on", i === 0));
+              gsap.set(fmts, { autoAlpha: 0, y: 12 });
+              gsap.set(fmts[0], { autoAlpha: 1, y: 0 });
+            };
+            const tl = gsap.timeline({ paused: true });
+            fmts.forEach((f, i) => {
+              const at = 0.2 + i * 1.5;
+              if (i > 0) {
+                tl.to(fmts[i - 1], { autoAlpha: 0, y: -12, duration: 0.3 }, at);
+                tl.fromTo(f, { autoAlpha: 0, y: 14 }, { autoAlpha: 1, y: 0, duration: 0.5, ease: "power3.out" }, at + 0.1);
+                tl.call(() => {
+                  chips.forEach((c, k) => c.classList.toggle("on", k === i));
+                  label.textContent = names[i];
+                }, null, at);
+              }
+            });
+            tl.to({}, { duration: 1.5 });
+            return { tl, init };
+          },
+        ];
+
+        const parts = scenes.map((sc, i) => build[i](sc));
+        const fills = steps.map((s) => {
+          const f = document.createElement("i");
+          f.className = "fill";
+          s.append(f);
+          return f;
+        });
+        let current = -1;
+        let visible = false;
+        let hovering = false;
+        const sync = () => {
+          const part = parts[current];
+          if (!part || reduce) return;
+          if (visible && !hovering) part.tl.play();
+          else part.tl.pause();
+        };
+        const go = (i) => {
+          const previous = current;
+          current = i;
+          steps.forEach((s, k) => {
+            s.classList.toggle("on", k === i);
+            s.setAttribute("aria-current", String(k === i));
+            gsap.set(fills[k], { scaleY: 0 });
+          });
+          label.textContent = scenes[i].dataset.title;
+          if (previous >= 0 && previous !== i) {
+            parts[previous].tl.pause();
+            gsap.to(scenes[previous], { autoAlpha: 0, duration: 0.3 });
+          }
+          gsap.fromTo(scenes[i], { autoAlpha: 0 }, { autoAlpha: 1, duration: 0.4 });
+          const { tl, init } = parts[i];
+          init();
+          tl.eventCallback("onUpdate", () => gsap.set(fills[i], { scaleY: tl.progress() }));
+          tl.eventCallback("onComplete", () => { if (!reduce) go((i + 1) % scenes.length); });
+          if (reduce) {
+            tl.progress(1, false).pause();
+            gsap.set(fills[i], { scaleY: 0 });
+          } else {
+            tl.restart();
+            sync();
+          }
+        };
+        steps.forEach((s, i) => s.addEventListener("click", () => go(i)));
+        const stage = root.querySelector(".stage");
+        stage.addEventListener("mouseenter", () => { hovering = true; sync(); });
+        stage.addEventListener("mouseleave", () => { hovering = false; sync(); });
+        new IntersectionObserver((entries) => {
+          visible = entries[0].isIntersecting;
+          sync();
+        }, { threshold: 0.35 }).observe(root);
+        let resizing;
+        addEventListener("resize", () => {
+          clearTimeout(resizing);
+          resizing = setTimeout(() => parts.forEach((p) => p.tl.invalidate()), 200);
+        });
+        go(0);
+      })();
+    </script>
+  </body>
+</html>

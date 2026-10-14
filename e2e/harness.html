@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Washi e2e harness</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <script type="module">
+      import "/e2e/mock-tauri.ts";
+      const q = new URLSearchParams(location.search);
+      localStorage.setItem(
+        "washi:prefs",
+        JSON.stringify({
+          theme: q.get("theme") ?? "system",
+          width: q.get("width") ?? "narrow",
+          outline: q.get("outline") === "1",
+          autosave: q.get("autosave") === "1",
+          fileTree: q.get("files") === "1",
+        }),
+      );
+      const html = await (await fetch("/index.html")).text();
+      const doc = new DOMParser().parseFromString(html, "text/html");
+      document.body.replaceChildren(...doc.body.childNodes);
+      await import("/src/main.ts");
+      window.dispatchEvent(new Event("DOMContentLoaded"));
+
+      const target = q.get("scroll");
+      if (target) {
+        for (let i = 0; i < 100; i++) {
+          const heading = [...document.querySelectorAll("h1, h2, h3")].find((h) => h.textContent?.trim().startsWith(target));
+          if (heading) {
+            await new Promise((r) => setTimeout(r, Number(q.get("settle") ?? 1500)));
+            heading.scrollIntoView({ block: "start" });
+            let box = heading.parentElement;
+            while (box && !/(auto|scroll)/.test(getComputedStyle(box).overflowY)) box = box.parentElement;
+            if (box) box.scrollTop -= 28;
+            break;
+          }
+          await new Promise((r) => setTimeout(r, 100));
+        }
+      }
+    </script>
+  </body>
+</html>

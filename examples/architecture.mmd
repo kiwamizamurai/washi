@@ -1,0 +1,34 @@
+classDiagram
+  direction LR
+  class Renderer {
+    <<trait>>
+    +extensions() str[]
+    +render(path) Output
+    +render_text(source) Output
+  }
+  class Output {
+    <<enum>>
+    Html(String)
+  }
+  class MarkdownRenderer
+  class MermaidRenderer
+  class TypstRenderer
+  class LatexRenderer~C, T~
+  class HtmlConverter {
+    <<trait>>
+  }
+  class TexCompiler {
+    <<trait>>
+  }
+  class PandocConverter
+  class SystemTex
+  Renderer <|.. MarkdownRenderer
+  Renderer <|.. MermaidRenderer
+  Renderer <|.. TypstRenderer
+  Renderer <|.. LatexRenderer
+  Renderer ..> Output : produces
+  LatexRenderer o-- HtmlConverter
+  LatexRenderer o-- TexCompiler
+  HtmlConverter <|.. PandocConverter
+  TexCompiler <|.. SystemTex
+  MermaidRenderer ..> MarkdownRenderer : fenced block

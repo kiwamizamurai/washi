@@ -1,0 +1,122 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag of an existing release to build and attach to (e.g. v0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  TAP_REPO: kiwamizamurai/homebrew-tap
+
+jobs:
+  release:
+    runs-on: macos-15
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Check that the tag matches the versions
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "The tag is not in the form v<major>.<minor>.<patch>: $TAG"; exit 1; }
+          version="${TAG#v}"
+          package=$(node -p "require('./package.json').version")
+          tauri=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          crate=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -1)
+          echo "tag=$version package.json=$package tauri.conf.json=$tauri Cargo.toml=$crate"
+          [ "$version" = "$package" ] && [ "$version" = "$tauri" ] && [ "$version" = "$crate" ]
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+        with:
+          version: 10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: cargo test --workspace
+
+      - run: pnpm release
+
+      - name: Make the zip and its sha256
+        id: pack
+        run: |
+          version="${TAG#v}"
+          asset="Washi-${version}-aarch64.zip"
+          ditto -c -k --sequesterRsrc --keepParent target/release/bundle/macos/Washi.app "$asset"
+          shasum -a 256 "$asset" | cut -d' ' -f1 > "$asset.sha256"
+          echo "asset=$asset" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(cat "$asset.sha256")" >> "$GITHUB_OUTPUT"
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSET: ${{ steps.pack.outputs.asset }}
+        run: gh release upload "$TAG" "$ASSET" "$ASSET.sha256" --clobber
+
+      - name: Update the Cask in the Homebrew tap
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "$TAP_TOKEN" ]; then
+            echo "::warning title=Homebrew tap not updated::HOMEBREW_TAP_TOKEN is not set, so the Cask in ${TAP_REPO} was not updated."
+            exit 0
+          fi
+          version="${TAG#v}"
+          sha256="${{ steps.pack.outputs.sha256 }}"
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/${TAP_REPO}.git" tap
+          mkdir -p tap/Casks
+          cat > tap/Casks/washi.rb <<CASK
+          cask "washi" do
+            version "${version}"
+            sha256 "${sha256}"
+
+            url "https://github.com/kiwamizamurai/washi/releases/download/v#{version}/Washi-#{version}-aarch64.zip"
+            name "Washi"
+            desc "Viewer and editor for Markdown, Typst, LaTeX and Mermaid"
+            homepage "https://github.com/kiwamizamurai/washi"
+
+            depends_on arch: :arm64
+            depends_on formula: ["pandoc", "tectonic"]
+            depends_on :macos
+
+            app "Washi.app"
+            binary "#{appdir}/Washi.app/Contents/MacOS/washi"
+
+            postflight_steps do
+              run "/usr/bin/xattr",
+                  args:           ["-dr", "com.apple.quarantine", "{{appdir}}/Washi.app"],
+                  writable_paths: ["Washi.app"],
+                  writable_base:  :appdir
+            end
+
+            zap trash: [
+              "~/Library/Application Support/dev.kiwamizamurai.washi",
+              "~/Library/Caches/dev.kiwamizamurai.washi",
+              "~/Library/WebKit/dev.kiwamizamurai.washi",
+            ]
+          end
+          CASK
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/washi.rb
+          git diff --cached --quiet || git commit -m "washi ${version}"
+          git push
